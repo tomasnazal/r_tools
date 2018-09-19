@@ -1,0 +1,305 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(forecast)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+```
+
+```{r}
+#Functions
+##0-1 normalization 
+normalize_scalar1 <- function(x, na.rm = T)
+                        {x / sqrt(sum(x^2, na.rm = na.rm))}
+#not in
+'%!in%' <- function(x,y) !('%in%'(x,y))
+```
+
+```{r}
+d <- fread("~/Documents/Podcast S1 Forecast/per day data/ondemand_clean.csv") %>% 
+  mutate(month_date = as.Date(paste("01-", month, sep = ""), format = "%d-%b-%Y")) %>%
+  filter(story_start_date >= as.Date("2016-03-01"))
+d[, grep("date", colnames(d))] <- lapply(d[, grep("date", colnames(d))],
+                                        function(x) as.Date(x, format = "%Y-%m-%d"))
+show_data <- read.csv("~/Documents/Podcast S1 Forecast/per day data/show_data.csv")
+```
+
+```{r}
+a <- d %>% group_by(show) %>%
+  filter(story_start_date == min(story_start_date),
+         show %in% show_data$show) %>% 
+  summarise(ep = story[1])
+
+d <- d %>% filter(show %in% show_data$show,
+                  story %!in% a$ep) %>%
+  group_by(show, story) %>% 
+  mutate(story_start_date1 = min(date))
+```
+
+```{r}
+#
+temp <- d %>% group_by(show, story) %>% summarise(story_start_date = story_start_date[1],
+                                                  story_start_date1 = story_start_date1[1],
+                                                  timediff = difftime(story_start_date1, story_start_date),
+                                                  orig_dls = ifelse(sum(is.na(which(date == story_start_date[1]))), NA,
+                                                                    downloads[which(date == story_start_date[1])]),
+                                                  new_dls = downloads[which(date == story_start_date1[1])][1])
+
+b <- temp[temp$timediff != 0,]
+b$story_start_date_real <- if_else(is.na(b$orig_dls), b$story_start_date1,
+                                  b$story_start_date)
+
+d <- d %>%
+  left_join(b %>% select(show, story, story_start_date_real)) %>% 
+  mutate(story_start_date = as.Date(if_else(!is.na(story_start_date_real),
+                                   story_start_date_real,
+                                   story_start_date))) %>% 
+  select(-story_start_date_real)
+
+d$published_that_day <- ifelse(d$date == d$story_start_date, 1, 0)
+```
+
+
+```{r}
+#aggregate weeklevel
+d <- d %>%
+  filter(show == "Nancy") %>% 
+  group_by(week_date) %>% 
+  summarise(downloads = sum(downloads),
+            published_week = sum(published_that_day),
+            n_eps = n_distinct(story))
+
+d <- filter(d, downloads > 7)
+d_comp <- d
+d <- d[1:37,]
+
+#time series
+d_ts_cov <- ts(d %>%
+                 mutate(week_date = row_number(week_date)) %>%
+                 select(published_week, n_eps))
+d_ts_uni <- ts(d %>% select(downloads), frequency = 51)
+
+```
+
+```{r}
+plot(d_ts_uni)
+```
+
+
+#Calculate rebroadcast dls ratio
+```{r}
+reb <- d %>% filter(grepl("rebroadcast|Rebroadcast|REBROADCAST", story)) %>% group_by(show, story) %>%
+  filter(date <= story_start_date + 30) %>%
+  summarise(downloads_reb = sum(downloads))
+
+reb_non <- d %>% filter(story %in%
+                          gsub(" \\(Rebroadcast\\)", "", reb$story)) %>%
+  group_by(show, story) %>%
+  filter(date <= story_start_date + 30) %>%
+  summarise(downloads = sum(downloads))
+
+reb_d <- left_join(reb_non, reb %>%
+                     mutate(story = gsub(" \\(Rebroadcast\\)", "", story))) %>% 
+  mutate(prop = round((downloads_reb / downloads) * 100, 2))
+
+reb_d %>% ungroup %>%  filter(prop < 110) %>% select(prop) %>% mutate(mean(prop))
+```
+
+
+
+```{r}
+#forecast new covariates
+exreg <- data.frame(published_week = rep(c(1,0), 26*3)) %>% 
+  mutate(n_eps = max(d$n_eps) + cumsum(published_week))
+nexreg_cov <- ts(exreg)
+
+exreg2 <- data.frame(published_week = rep(c(0), 52*3),
+                     n_eps = 0)
+exreg2[sample(1:nrow(exreg2), 138), ]$published_week <- 1
+exreg2 <- mutate(exreg2, n_eps = max(d$n_eps) + cumsum(published_week))
+nexreg_cov2 <- ts(exreg2)
+
+```
+
+```{r}
+plot(forecast(auto.arima(ts(d %>% select(downloads), frequency = 29), D = 1, xreg = d_ts_cov),h=52*3, xreg = nexreg_cov))
+```
+
+```{r}
+plot(forecast(auto.arima(ts(d %>% select(downloads), frequency = 29), D = 1, xreg = d_ts_cov),h=52*3, xreg = nexreg_cov2))
+```
+
+
+
+```{r}
+nancy_arima <- auto.arima(ts(d %>% select(downloads), frequency = 32), D = 1, xreg = d_ts_cov)
+```
+
+
+```{r}
+nancy_forecast <- forecast(nancy_arima,h=52*3, xreg = nexreg_cov)
+nancy_forecast2 <- forecast(nancy_arima,h=52*3, xreg = nexreg_cov2)
+
+
+nan_fore_df <- data.frame(week_date = c(d_comp$week_date,
+                                        seq.Date(max(d_comp$week_date),
+                                                 (max(d_comp$week_date) +
+                                                    (((length(nancy_forecast$mean) - 1) + 23) * 7)),
+                                                 by = "week")),
+                          downloads = c(d_comp$downloads,
+                                        d_comp$downloads[15:37],
+                                        nancy_forecast$mean),
+                          is_forecast = c(rep(0, nrow(d_comp)),
+                                          rep("rep", 23),
+                                          rep(1, length(nancy_forecast$mean)))) %>%
+  mutate(year = year(week_date),
+         month = paste(year, month(week_date), sep = ""),
+         fy = ifelse(between(week_date,
+                             as.Date('2017-07-01'),
+                             as.Date('2018-06-30')), "FY2018",
+                     ifelse(between(week_date,
+                                    as.Date('2018-07-01'),
+                                    as.Date('2019-06-30')), "FY2019",
+                            ifelse(between(week_date,
+                                           as.Date('2019-07-01'),
+                                           as.Date('2020-06-30')), "FY2020",
+                             ifelse(between(week_date,
+                                            as.Date('2020-07-01'),
+                                            as.Date('2021-06-30')), "FY2021",
+                                    ifelse(between(week_date,
+                                                   as.Date('2021-07-01'),
+                                                   as.Date('2022-06-30')), "FY2022", NA))))))
+
+nan_fore_df2 <- data.frame(week_date = c(d_comp$week_date,
+                                        seq.Date(max(d_comp$week_date),
+                                                 (max(d_comp$week_date) +
+                                                    (((length(nancy_forecast2$mean) - 1) + 23) * 7)),
+                                                 by = "week")),
+                          downloads = c(d_comp$downloads,
+                                        d_comp$downloads[15:37],
+                                        nancy_forecast2$mean),
+                          is_forecast = c(rep(0, nrow(d_comp)),
+                                          rep("rep", 23),
+                                          rep(1, length(nancy_forecast2$mean)))) %>%
+  mutate(year = year(week_date),
+         month = paste(year, month(week_date), sep = ""),
+         fy = ifelse(between(week_date,
+                             as.Date('2017-07-01'),
+                             as.Date('2018-06-30')), "FY2018",
+                     ifelse(between(week_date,
+                                    as.Date('2018-07-01'),
+                                    as.Date('2019-06-30')), "FY2019",
+                            ifelse(between(week_date,
+                                           as.Date('2019-07-01'),
+                                           as.Date('2020-06-30')), "FY2020",
+                             ifelse(between(week_date,
+                                            as.Date('2020-07-01'),
+                                            as.Date('2021-06-30')), "FY2021",
+                                    ifelse(between(week_date,
+                                                   as.Date('2021-07-01'),
+                                                   as.Date('2022-06-30')), "FY2022", NA))))))  
+```
+
+```{r}
+ggplot(nan_fore_df) +
+  labs(title = "Three Year Forecast for Nancy",
+       x = "") +
+  geom_line(aes(x = week_date,
+                y = downloads,
+                color = is_forecast)) +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+```{r}
+ggplot(nan_fore_df2 %>%
+         filter(is_forecast != "rep")) +
+  labs(title = "Three Year Forecast for Nancy",
+       x = "") +
+  geom_line(aes(x = week_date,
+                y = downloads,
+                color = is_forecast)) +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+
+
+#Total downloads
+```{r}
+nan_fore_df %>% filter(is_forecast == 1) %>% summarise(sum(downloads))
+nan_fore_df2 %>% filter(is_forecast == 1) %>% summarise(sum(downloads))
+```
+
+#Average Monthly Downloads
+```{r}
+nan_fore_df %>%
+  filter(is_forecast == 1) %>%
+  group_by(month) %>% 
+  summarise(downloads = sum(downloads)) %>% 
+  ungroup %>% 
+  summarise(mean(downloads))
+
+nan_fore_df2 %>%
+  filter(is_forecast == 1) %>%
+  group_by(month) %>% 
+  summarise(downloads = sum(downloads)) %>% 
+  ungroup %>% 
+  summarise(mean(downloads))
+```
+
+#yearly downloads
+```{r}
+nan_fore_df %>%
+  filter(is_forecast == 1) %>%
+  group_by(year) %>% 
+  summarise(downloads = sum(downloads)) %>% 
+  mutate(growth = (downloads- lag(downloads)) / lag(downloads))
+
+nan_fore_df2 %>%
+  filter(is_forecast == 1) %>%
+  group_by(year) %>% 
+  summarise(downloads = sum(downloads)) %>% 
+  mutate(growth = (downloads- lag(downloads)) / lag(downloads))
+```
+
+#yearly downloads
+```{r}
+nan_fore_df2 %>%
+  filter(!is.na(fy),
+         fy != "FY2022") %>%
+  group_by(fy) %>% 
+  summarise(downloads = sum(downloads)) %>% 
+  mutate(growth = round((downloads- lag(downloads)) / lag(downloads) * 100, 2))
+
+
+write.csv(nan_fore_df2 %>%
+  filter(!is.na(fy),
+         fy != "FY2022") %>%
+  group_by(fy) %>% 
+  summarise(downloads = sum(downloads)) %>% 
+  mutate(growth = round((downloads- lag(downloads)) / lag(downloads) * 100, 2)),
+  "fygrowth3yrnancy.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

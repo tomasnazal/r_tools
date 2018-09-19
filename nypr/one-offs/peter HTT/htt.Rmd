@@ -1,0 +1,131 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(lubridate)
+library(ggrepel)
+library(data.table)
+library(stringr)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+
+```
+
+```{r}
+d <- read.csv('HTT - by week.csv')
+d$downloads <- as.numeric(gsub(",", "", d$downloads))
+d$week <- as.Date(d$week)
+d$week_n <- week(d$week)
+d$year <- year(d$week)
+
+d2 <- read.csv("HTT_eps_byweek.csv")
+colnames(d2) <- c("story", "week", "first_publish", "downloads")
+d2$week <- as.Date(d2$week)
+d2$first_publish <- as.Date(d2$first_publish)
+hht_eps <- d2 %>% group_by(story) %>% filter(week < first_publish + 30)
+hht_eps <- hht_eps %>% group_by(story) %>% 
+  summarise(n = length(story),
+            downloads = sum(downloads))
+
+hht_weekeps <- d2 %>% group_by(story) %>% mutate(week_n = week(first_publish),
+                                                 year = year(first_publish))
+hht_weekeps <- hht_weekeps %>% group_by(story) %>% summarise(week_n = week_n[1],
+                                                             year = year[1])
+
+
+d <- d %>% left_join(hht_weekeps %>% select(story, week_n, year))
+
+
+dh <- fread("HHT - historic.csv")
+dh$date <- as.Date(paste("01", "-",
+                         str_extract(dh$month, "^[^/]*[^/]"),
+                         "-", "20",
+                         str_extract(dh$month, "[^/]*[^/]$"),
+                         sep = ""),
+                   format = "%d-%m-%Y")
+
+dh$downloads <- as.numeric(gsub(",", "", dh$downloads))
+
+dh$month <- month(dh$date)
+dh$summer <- ifelse(dh$month %in% c(6,7,8), 1, 0)
+
+```
+
+```{r, fig.width= 12, fig.height=6}
+ggplot(d %>% filter(week > as.Date("2016-03-28")),
+       aes(x = week,
+           y = downloads)) +
+  labs(title = "Here's the Thing, Historic Weekly Downloads") +
+  geom_point() +
+  geom_line() +
+  geom_label_repel(data = d %>% arrange(desc(downloads)) %>% 
+              slice(1:8),
+            aes(x = week,
+           y = downloads,
+           label = story),
+           size = 3,
+           alpha = 0.8,
+           segment.color = "red",
+           force = 9,
+           nudge_y = 27000) +
+  stat_smooth()+
+  geom_vline(xintercept = c(as.Date("2016-01-01"),
+                            as.Date("2017-01-01"),
+                            as.Date("2018-01-01")),
+             color = "grey",
+             linetype = "dashed") +
+  scale_y_continuous(label = scales::comma) +
+  my_theme
+```
+
+```{r, fig.width= 10, fig.height=5}
+ggplot(dh, aes(x = date,
+               y = downloads)) +
+  labs(title = "Here's the Thing, Historic Monthly Downloads",
+       x = "year") +
+  geom_vline(xintercept = c(as.Date("2013-01-01"),
+                            as.Date("2014-01-01"),
+                            as.Date("2015-01-01"),
+                            as.Date("2016-01-01"),
+                            as.Date("2017-01-01"),
+                            as.Date("2018-01-01")),
+             color = "grey",
+             linetype = "dotted") +
+  geom_line(color = "#3dceb4",
+            size = 1) +
+  geom_point(size = 0.5,
+             color = "#1a7060") +
+  stat_smooth(color = "#f77f1d",
+              linetype = "dashed",
+              se = F) +
+  geom_text(aes(label = releases),
+            nudge_y = 30000) +
+  geom_point(data = dh %>% filter(summer == 1),
+             aes(x = date,
+                 y = downloads),
+             color = "blue",
+             size = 2) +
+  scale_x_date(breaks = c(as.Date("2013-01-01"),
+                          as.Date("2014-01-01"),
+                          as.Date("2015-01-01"),
+                          as.Date("2016-01-01"),
+                          as.Date("2017-01-01"),
+                          as.Date("2018-01-01")),
+               labels = c("2013", "2014", "2015",
+                          "2016", "2017", "2018")) +
+  scale_y_continuous(labels = scales::comma) +
+  
+  my_theme
+```
+
+```{r}
+summary(lm(downloads~summer + releases, data = dh))
+```
+

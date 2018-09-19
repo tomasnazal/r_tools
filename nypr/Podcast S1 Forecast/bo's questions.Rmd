@@ -1,0 +1,356 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+```
+
+```{r}
+#Functions
+##0-1 normalization 
+normalize_scalar1 <- function(x, na.rm = T)
+                        {x / sqrt(sum(x^2, na.rm = na.rm))}
+#not in
+'%!in%' <- function(x,y) !('%in%'(x,y))
+```
+
+```{r}
+d <- fread("~/Documents/Podcast S1 Forecast/per day data/ondemand_clean.csv") %>% 
+  mutate(month_date = as.Date(paste("01-", month, sep = ""), format = "%d-%b-%Y")) %>%
+  filter(story_start_date >= as.Date("2016-03-01"))
+d[, grep("date", colnames(d))] <- lapply(d[, grep("date", colnames(d))],
+                                        function(x) as.Date(x, format = "%Y-%m-%d"))
+show_data <- read.csv("~/Documents/Podcast S1 Forecast/per day data/show_data.csv")
+show_data$show <- ifelse(show_data$show == "Radiolab Presents: More Perfect",
+                           "More Perfect", as.character(show_data$show))
+```
+
+```{r}
+a <- d %>% group_by(show) %>%
+  filter(story_start_date == min(story_start_date),
+         show %in% show_data$show) %>% 
+  summarise(ep = story[1])
+
+d <- d %>% filter(show %in% show_data$show,
+                  story %!in% a$ep) %>%
+  group_by(show, story) %>% 
+  mutate(story_start_date1 = min(date))
+```
+
+```{r}
+#
+temp <- d %>% group_by(show, story) %>% summarise(story_start_date = story_start_date[1],
+                                                  story_start_date1 = story_start_date1[1],
+                                                  timediff = difftime(story_start_date1, story_start_date),
+                                                  orig_dls = ifelse(sum(is.na(which(date == story_start_date[1]))), NA,
+                                                                    downloads[which(date == story_start_date[1])]),
+                                                  new_dls = downloads[which(date == story_start_date1[1])][1])
+
+b <- temp[temp$timediff != 0,]
+b$story_start_date_real <- if_else(is.na(b$orig_dls), b$story_start_date1,
+                                  b$story_start_date)
+
+d <- d %>%
+  left_join(b %>% select(show, story, story_start_date_real)) %>% 
+  mutate(story_start_date = as.Date(if_else(!is.na(story_start_date_real),
+                                   story_start_date_real,
+                                   story_start_date))) %>% 
+  select(-story_start_date_real)
+
+d$published_that_day <- ifelse(d$date == d$story_start_date, 1, 0)
+```
+
+#graphic check
+```{r}
+paralell <- d %>% filter(story %in% unique(temp[temp$timediff != 0,]$story)) %>% 
+  mutate(date_k = as.Date(date),
+         timediff = difftime(story_start_date1,
+                             story_start_date,
+                             units = "days")) %>% 
+  group_by(show, story) %>% 
+  arrange(date) %>% 
+  slice(1:(abs(timediff[1]) + 5))
+
+for(i in unique(paralell$show)){
+  for(j in unique(paralell$story)){
+    if(j %in% paralell[paralell$show == i,]$story){
+     print(ggplot(paralell %>% filter(show == i,
+                                      story == j)) +
+          labs(title = paste(i, j)) +
+          geom_line(aes(x = date_k,
+                        y = downloads)) +
+          geom_vline(aes(xintercept = as.Date(story_start_date[1])),
+                      linetype = "dashed",
+                      color = "grey") +
+           geom_vline(aes(xintercept = as.Date(story_start_date1[1])),
+                      linetype = "dashed",
+                      color = "blue") +
+          #annotate("text", aes(x = (max(date_k) - 10), y = max(downloads) - 5,
+           #        label = paste(timediff[1]))) +
+          #coord_cartesian(xlim = c(as.Date(min(date_k)),
+           #                        as.Date(min(date_k) + 90))) +
+          my_theme)
+    }
+  }
+}
+
+```
+
+```{r}
+d_eps_fit <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, story) %>%
+    filter(date <= story_start_date + 30) %>% 
+  summarise(story_start_date = story_start_date[1],
+            downloads = sum(downloads),
+            start_month = format(story_start_date, "%b-%Y"),
+            start_year = year(story_start_date),
+            start_week = week(story_start_date),
+            story_duration = story_duration[1] /60) %>%
+  arrange(show, story_start_date) %>% 
+  mutate(start_weekday = weekdays(story_start_date))
+
+d_eps_fit$start_weekday <- relevel(as.factor(d_eps_fit$start_weekday), "Monday")
+d_eps_fit$release_groups <- ifelse(d_eps_fit$start_weekday %in% c("Monday", "Tuesday", "Wednesday"), "mon-wed",
+                               ifelse(d_eps_fit$start_weekday %in% c("Thursday", "Friday"), "thu-fri", "sat-sun"))
+d_eps_fit$release_groups <- relevel(as.factor(d_eps_fit$release_groups), "mon-wed")
+d_eps_fit$release_month <- as.factor(month(d_eps_fit$story_start_date))
+d_eps_fit$start_year <- as.factor(d_eps_fit$start_year)
+```
+
+```{r}
+d_eps_fit <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, story) %>%
+    filter(date <= story_start_date + 30) %>% 
+  summarise(story_start_date = story_start_date[1],
+            downloads = sum(downloads),
+            start_month = format(story_start_date, "%b-%Y"),
+            start_year = year(story_start_date),
+            start_week = week(story_start_date),
+            story_duration = story_duration[1] /60) %>%
+  arrange(show, story_start_date) %>% 
+  mutate(start_weekday = weekdays(story_start_date))
+```
+
+
+
+```{r}
+summary(lm(downloads~start_weekday + story_duration + as.factor(start_year) + release_month + show, data = d_eps_fit))
+summary(lm(downloads~start_weekday, data = d_eps_fit))
+```
+
+#Speed of release
+```{r}
+d_speed <- d %>%
+  filter(published_to_podcast == 1) %>%
+  group_by(show, date) %>% 
+  mutate(running_eps = n_distinct(story)) %>% 
+  ungroup() %>% 
+  group_by(show, year, week) %>% 
+  summarise(downloads = sum(downloads),
+            eps_week = sum(published_that_day),
+            month = month[1],
+            month_date = month_date[1],
+            show_start_date = show_start_date[1]) %>% 
+  ungroup() %>% 
+  group_by(show, month) %>%
+  summarise(downloads = sum(downloads),
+            months_on_air = length(seq.Date(min(show_start_date),
+                                     month_date[1], by = 'month')),
+            eps_month = sum(eps_week),
+            speed = sum(eps_week)/length(week))
+```
+
+```{r}
+summary(lm(downloads ~ speed + I(speed^2) + months_on_air + eps_month + month + show, data = d_speed %>% filter(show %!in% c("The Brian Lehrer Show",
+                                                                                                                 "Indivisible",
+                                                                                                                 "Freakonomics Radio",
+                                                                                                                 "Radiolab",
+                                                                                                                 "More Perfect"))))
+```
+
+```{r}
+ggplot(d_speed ) +
+  labs(title = "Average Weekly Release Speed on Monthly Downloads") +
+  geom_jitter(aes(x = speed,
+                y = downloads,
+                color = show),
+              size = 0.3) +
+    geom_smooth(aes(x = speed,
+                y = downloads),
+                size = 0.5) +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+```{r}
+ggplot(d_speed %>% filter(show %!in% c("The Brian Lehrer Show",
+                                       "Indivisible")
+                          )) +
+  labs(title = "Average Weekly Release Speed on Monthly Downloads")+
+  geom_jitter(aes(x = speed,
+                y = downloads,
+                color = show),
+              size = 0.3) +
+    geom_smooth(aes(x = speed,
+                y = downloads),
+                size = 0.5) +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+
+#Check non-linearity, compare models
+```{r}
+lm1 <- lm(downloads ~ speed + I(speed^2)  + months_on_air +
+            eps_month + month + show,
+          data = d_speed %>% filter(show %!in% c("The Brian Lehrer Show",
+                                                 "Indivisible",
+                                                 "Freakonomics Radio",
+                                                 "Radiolab",
+                                                 "More Perfect")))
+lm2 <- lm(downloads ~ speed + months_on_air +
+            eps_month + month + show,
+          data = d_speed %>% filter(show %!in% c("The Brian Lehrer Show",
+                                                 "Indivisible",
+                                                 "Freakonomics Radio",
+                                                 "Radiolab",
+                                                 "More Perfect")))
+
+```
+
+
+```{r}
+ggplot(d_eps_fit %>% 
+         filter(story_duration < 150),
+       aes(x = story_duration, y = downloads)) +
+  labs(title = "Episode Durations vs. First 30 Days Downloads",
+       x = "Duration (Minutes)") +
+  geom_jitter(aes(color = show),
+              size = 0.5) +
+  stat_smooth(method = "lm") +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+```{r}
+plotly::ggplotly(ggplot(d_eps_fit %>% 
+         filter(story_duration < 150,
+                show %!in% c("Radiolab", "Freakonomics Radio",
+                             "More Perfect")),
+       aes(x = story_duration, y = downloads)) +
+  labs(title = "Episode Durations vs. First 30 Days Downloads",
+       x = "Duration (Minutes)") +
+  geom_jitter(aes(color = show),
+              size = 0.5) +
+  stat_smooth(method = "lm") +
+  my_theme +
+  theme(legend.position = "none"))
+```
+
+
+```{r, fig.height=9, fig.width=12}
+ggplot(d_eps_fit %>%
+         mutate(start_weekday = factor(start_weekday,
+                                       levels = c("Monday", "Tuesday", "Wednesday",
+                                                  "Thursday", "Friday", "Saturday",
+                                                  "Sunday")))) +
+  labs(title = "First 30 Days Episode Downloads. By Weekday Release.") +
+  geom_density(aes(x = downloads,
+                   fill = start_weekday),
+               alpha = 0.5) +
+  facet_wrap(~start_weekday,
+             nrow = 7,
+             strip.position = "left") +
+  coord_cartesian(xlim = c(0,1000000)) +
+  my_theme +
+  theme(legend.position = "none",
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.spacing.y = unit(-4, "lines"),
+        strip.text = element_text(vjust = 0.2),
+        plot.title = element_text(size = 30))
+  
+```
+
+```{r, fig.height=9, fig.width=11}
+ggplot(d_eps_fit %>%
+         mutate(start_weekday = factor(start_weekday,
+                                       levels = c("Monday", "Tuesday", "Wednesday",
+                                                  "Thursday", "Friday", "Saturday",
+                                                  "Sunday")))) +
+  labs(title = "First 30 Days Episode Downloads. By Month of Release.") +
+  geom_density(aes(x = downloads,
+                   fill = release_month),
+               alpha = 0.5,
+               color = "white") +
+  facet_wrap(~release_month,
+             nrow = 12,
+             strip.position = "left") +
+  coord_cartesian(xlim = c(0, 300000)) +
+  my_theme +
+  theme(legend.position = "none",
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.spacing.y = unit(-4, "lines"),
+        strip.text = element_text(vjust = 0.2),
+        plot.title = element_text(size = 30))
+```
+
+
+```{r}
+d_eps_fit <- d_eps_fit %>% left_join(show_data %>% select(show, itunes_genre))
+```
+```{r}
+ggplot(j <- d_eps_fit %>% group_by(itunes_genre) %>% summarise (avg_dls = mean(downloads))) +
+  labs(title = "Distribution of Downloads by Itunes Genre.") +
+  geom_density(aes(x = downloads,
+                   fill = itunes_genre),
+               alpha = 0.5) +
+  # facet_wrap(~itunes_genre,
+  #            nrow = 15,
+  #            strip.position = "left") +
+  coord_cartesian(xlim = c(0, 100000)) +
+  my_theme +
+  theme(legend.position = "none",
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.spacing.y = unit(-4, "lines"),
+        strip.text = element_text(vjust = 0.2),
+        plot.title = element_text(size = 30))
+```
+
+```{r}
+j <- d_eps_fit %>%
+  group_by(itunes_genre) %>%
+  summarise (avg_dls = mean(downloads)) %>%
+  arrange(desc(avg_dls)) %>% 
+  mutate(itunes_genre = factor(itunes_genre, levels = itunes_genre))
+
+ggplot(j) +
+  labs(title = "Episode Average Downloads by Itunes Genre") +
+  geom_bar(aes(x = itunes_genre,
+               y = avg_dls,
+               fill = avg_dls), stat = "identity") +
+  my_theme +
+  theme(legend.position = "none",
+        axis.text = element_text(angle = 45, hjust = 1),
+        axis.title = element_blank())
+```
+

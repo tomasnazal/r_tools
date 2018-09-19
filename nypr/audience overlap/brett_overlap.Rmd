@@ -1,0 +1,108 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(UpSetR)
+library(grid)
+library(gridExtra)
+library(glue)
+library(dplyr)
+library(tidyr)
+library(data.table)
+```
+
+
+```{r}
+d_overlap <- fread("overlap_brett.csv")
+d_overlap <- d_overlap %>% filter(month !=5)
+summary_overlap <- d_overlap %>%
+  group_by(month, show) %>%
+  summarise(length = length(listeners),
+            listeners = n_distinct(listeners))
+d_sample <- sample_n(d_overlap, 1000000)
+```
+
+
+```{r}
+hash_list <- list(unique(d_overlap$listeners))
+match_list <- list()
+for(i in unique(d_overlap$show)){
+  show_listeners <- d_overlap %>% filter(show == i)
+  for(mo in 2:4){
+    show_listeners_l <- show_listeners %>%
+      filter(month == mo) %>% pull(listeners)
+    match_list[[glue("{i}_{mo}")]] <- hash_list[[1]] %in% show_listeners_l
+  }
+}
+overlaps <- as.data.frame(match_list)
+```
+
+
+
+
+```{r}
+cross_dat <- list()
+name_rows <- list()
+counter <- 1
+#calculate the expression source 
+for(i in unique(d_overlap$show)){
+  cross_dat[["names"]][counter] <- i
+  for(j in c("no",unique(d_overlap$show))){
+    for(mo in 2:4){
+      d <- d_overlap %>% filter(month == mo)
+      #The ones that do not cross with others
+      if(j == "no"){
+        cross_dat[[glue("{j}_{mo}")]][counter] <- nrow(d %>%
+                                 filter(show == i) %>%
+                                 anti_join(d %>%
+                                             filter(show != i),
+                                           by = "listeners"))
+      }
+      else{
+        cross_dat[[glue("{j}_{mo}")]][counter] <- nrow(d %>%
+                                 filter(show == i) %>%
+                                 semi_join(d %>%
+                                             filter(show == j),
+                                           by = "listeners"))
+      }
+    }
+  }
+  counter <- counter + 1
+}
+```
+
+
+```{r}
+overlaps <- as.data.frame(cross_dat)
+overlaps <- overlaps %>% transmute(show = names,
+                            no = rowMeans(overlaps %>% select(starts_with("no"))),
+                            Freakonomics.Radio = rowMeans(overlaps %>% select(starts_with("Freakonomics.Radio"))),
+                            Here.s.The.Thing = rowMeans(overlaps %>% select(starts_with("Here.s.The.Thing"))),
+                            Radiolab = rowMeans(overlaps %>% select(starts_with("Radiolab"))),
+                            Snap.Judgment = rowMeans(overlaps %>% select(starts_with("Snap.Judgment"))),
+                            The.New.Yorker.Radio.Hour = rowMeans(overlaps %>% select(starts_with("The.New.Yorker.Radio.Hour"))))
+colnames(overlaps)
+```
+
+
+
+```{r}
+expin <- c(`Freakonomics Radio` = 2672894, `Here's The Thing` = 240465, Radiolab = 2579407, `Snap Judgment` = 331878, `The New Yorker Radio Hour` = 341597,
+           `Freakonomics Radio&Here's The Thing` = 76009, `Freakonomics Radio&Radiolab` = 668732,
+           `Freakonomics Radio&Snap Judgment` = 145255, `Freakonomics Radio&The New Yorker Radio Hour` = 102573,
+           `Here's The Thing&Radiolab` = 77995, `Here's The Thing&Snap Judgment` = 26764, `Here's The Thing&The New Yorker Radio Hour` = 40694,
+           `Radiolab&Snap Judgment` = 204001, `Radiolab&The New Yorker Radio Hour` = 114042)
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+upset(fromList(list_input), order.by = "freq")
+upset(fromExpression(expin), order.by = "freq")
+```
+

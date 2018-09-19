@@ -1,0 +1,17 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+d <- read.csv("otm_episodes.csv")
+colnames(d) <- c("story", "date", "downloads", "listeners")
+d$date <- as.Date(d$date)
+d <- d %>% filter(date > "2016-03-24")
+```
+
+```{r}
+africatown <- d %>% filter(grepl("fricatown", story))
+africatown <- d %>% filter(grepl("ors", story))
+```
+

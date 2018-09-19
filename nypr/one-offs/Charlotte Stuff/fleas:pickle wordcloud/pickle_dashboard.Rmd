@@ -1,0 +1,115 @@
+---
+title: 'Health Channel Pre-Launch Stats'
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows 
+    source_code: embed
+---
+
+```{r}
+library(dplyr)
+library(quanteda)
+library(tm)
+library(wordcloud)
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#read data
+pickle <- read.csv("pickle.csv")
+``` 
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Define Functions
+
+##Space Cleaning Function
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+
+#Makes Wordclouds from character vectors
+wcfromvector <-  function(textvector, wcwords, user_stp_words = NA, grams = 1){
+  #Text as corpus
+  corpus <- Corpus(VectorSource(paste(textvector, collapse = " ")))
+  #Clean Whitespace
+  corpus <- tm_map(corpus, toSpace, "/")
+  corpus <- tm_map(corpus, toSpace, "@")
+  corpus <- tm_map(corpus, toSpace, "\\|")
+  # Convert the text to lower case
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  # Remove numbers
+  corpus <- tm_map(corpus, removeNumbers)
+  # Remove english common stopwords
+  corpus <- tm_map(corpus, removeWords, stopwords("english"))
+  # specify your stopwords as a character vector
+  corpus <- tm_map(corpus, removeWords, user_stp_words) 
+  # Remove punctuations
+  corpus <- tm_map(corpus, removePunctuation)
+  # Eliminate extra white spaces
+  corpus <- tm_map(corpus, stripWhitespace)
+  #Document Term matrix
+  # dtm <- TermDocumentMatrix(corpus)
+  # m <- as.matrix(dtm)
+  # v <- sort(rowSums(m),decreasing=TRUE)
+  # d <- data.frame(word = names(v),freq=v)
+  d <- corpus %>% 
+  unlist() %>%  
+  tokens() %>%
+  tokens_ngrams(grams, concatenator = " ") %>%  
+  unlist() %>%  
+  as.data.frame() %>% 
+  group_by_(".") %>%  
+  summarize(cnt=n()) %>%
+  arrange(desc(cnt))
+  #Make Wordcloud
+  set.seed(1234)
+  wordcloud(words = d$., freq = d$cnt, min.freq = 1,
+            max.words=wcwords, random.order=FALSE, rot.per=0, 
+            colors=brewer.pal(8, "Dark2"))
+}
+```
+
+
+One Word 
+====================
+
+Row 
+---------------------------------------
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+# layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+# par(mar=rep(0, 4))
+# plot.new()
+#text(x=0.5, y=0.5, "What Made You Decide to Listen to the Show")
+wcfromvector(pickle$decide, 20, grams = 1)
+```
+
+
+Two Words 
+====================
+
+Row 
+---------------------------------------
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+# layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+# par(mar=rep(0, 4))
+# plot.new()
+# text(x=0.5, y=0.5, "What Made You Decide to Listen to the Show")
+wcfromvector(pickle$decide,user_stp_words = c(""), 20, grams = 2)
+```
+
+
+Three Words 
+====================
+
+Row 
+---------------------------------------
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#layout(matrix(c(1, 2), nrow=1), heights=c(0.8, 8))
+# par(mar=rep(0, 4))
+# plot.new()
+# text(x=0.5, y=0.5, "What Made You Decide to Listen to the Show")
+wcfromvector(fleas$What.made.you.decide.to.listen.to.the.show.,user_stp_words = c("'"), 100, grams = 3)
+```
+

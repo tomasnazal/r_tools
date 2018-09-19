@@ -1,0 +1,129 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(quanteda)
+library(tm)
+library(wordcloud)
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#read data
+non_listeners <- read.csv("non_listeners.csv")
+one_time <- read.csv("one_time_donors.csv")
+sustaining <- read.csv("sustaining.csv")
+non_listeners_rep <- read.csv("non_listener_report.csv")
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Define Functions
+
+##Space Cleaning Function
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+
+#Makes Wordclouds from character vectors
+wcfromvector <-  function(textvector, wcwords, user_stp_words = NA, grams = 1){
+  #Text as corpus
+  text_nl_bad <- Corpus(VectorSource(paste(textvector, collapse = " ")))
+  #Clean Whitespace
+  text_nl_bad <- tm_map(text_nl_bad, toSpace, "/")
+  text_nl_bad <- tm_map(text_nl_bad, toSpace, "@")
+  text_nl_bad <- tm_map(text_nl_bad, toSpace, "\\|")
+  # Convert the text to lower case
+  text_nl_bad <- tm_map(text_nl_bad, content_transformer(tolower))
+  # Remove numbers
+  text_nl_bad <- tm_map(text_nl_bad, removeNumbers)
+  # Remove english common stopwords
+  text_nl_bad <- tm_map(text_nl_bad, removeWords, stopwords("english"))
+  # specify your stopwords as a character vector
+  text_nl_bad <- tm_map(text_nl_bad, removeWords, user_stp_words) 
+  # Remove punctuations
+  text_nl_bad <- tm_map(text_nl_bad, removePunctuation)
+  # Eliminate extra white spaces
+  text_nl_bad <- tm_map(text_nl_bad, stripWhitespace)
+  #Document Term matrix
+  # dtm <- TermDocumentMatrix(text_nl_bad)
+  # m <- as.matrix(dtm)
+  # v <- sort(rowSums(m),decreasing=TRUE)
+  # d <- data.frame(word = names(v),freq=v)
+  d <- text_nl_bad %>% 
+  unlist() %>%  
+  tokens() %>%
+  tokens_ngrams(grams, concatenator = " ") %>%  
+  unlist() %>%  
+  as.data.frame() %>% 
+  group_by_(".") %>%  
+  summarize(cnt=n()) %>%
+  arrange(desc(cnt))
+  #Make Wordcloud
+  set.seed(1234)
+  print(wordcloud(words = d$., freq = d$cnt, min.freq = 1,
+            max.words=wcwords, random.order=FALSE, rot.per=0.35, 
+            colors=brewer.pal(8, "Dark2")))
+}
+```
+
+```{r}
+ggplot(data.frame(dld = c(661,
+643,
+549,
+499,
+464,
+448),
+ep = c(1:6))) +
+  labs(title = "Pull Quote Episdoe Downloads",
+       x = "Episode",
+       y = "Downloads") +
+  geom_line(aes(x = ep, y =dld)) +
+  geom_point(aes(x = ep, y =dld)) +
+  geom_text(aes(x = ep, y =dld,
+                label = dld),
+            nudge_y = 30) +
+  scale_x_continuous(breaks = seq(1,6,1)) +
+  coord_cartesian(ylim = c(0,700)) +
+  my_theme
+```
+
+
+
+#Non listeners
+
+##What They Liked the Most 
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+wcfromvector(non_listeners_rep$What.was.your.favorite.part.of..Pull.Quote.., 100, grams = 2)
+```
+
+##What They Liked the Least 
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+wcfromvector(non_listeners_rep$What.was.your.least.favorite.part.of..Pull.Quote.., 100)
+```
+
+#One-Time Donors
+
+##What They Liked the Most 
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+wcfromvector(one_time$What.was.your.favorite.part.of..Pull.Quote.., 100)
+```
+
+##What They Liked the Least 
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+wcfromvector(one_time$What.was.your.least.favorite.part.of..Pull.Quote.. , 100)
+```
+
+#Sustainers
+
+##What They Liked the Most 
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+wcfromvector(sustaining$What.was.your.favorite.part.of..Pull.Quote.., 100)
+```
+
+##What They Liked the Least 
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+wcfromvector(sustaining$What.was.your.least.favorite.part.of..Pull.Quote.. , 100)
+```

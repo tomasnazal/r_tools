@@ -1,0 +1,13 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(data.table)
+```
+
+
+```{r}
+d <- fread("progressive.csv", verbose = T)
+```
+

@@ -1,0 +1,336 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{SQL}
+# SQL Runner [model query] query on looker
+# SELECT
+#   DATE(CONVERT_TIMEZONE('UTC', 'America/New_York', odlu.listen_timestamp )) AS "date"
+#   , show.show_name AS show
+#   , story.story_title AS story
+#   , story.first_publish_date AS publish_date
+#   , COUNT(*) AS downloads
+# FROM ${on_demand_listens_unique.SQL_TABLE_NAME} AS odlu
+#   LEFT JOIN ${show.SQL_TABLE_NAME} AS show ON odlu.show_id = show.show_id
+#   LEFT JOIN ${story_on_demand.SQL_TABLE_NAME} AS story ON odlu.story_id = story.story_id
+# WHERE show.show_name IN ('2 Dope Queens',
+#                          'More Perfect',
+#                          'Sooo Many White Guys',
+#                          'The United States of Anxiety',
+#                          'Nancy',
+#                          'A Piece of Work',
+#                          'Stay Tuned with Preet',
+#                          'Snap Judgment Presents: Spooked',
+#                          'This Podcast Has Fleas',
+#                          'Pickle',
+#                          'Late Night Whenever',
+#                          'Trump, Inc.',
+#                          'Caught',
+#                          'American Fiasco',
+#                          'Aftereffect')
+# GROUP BY 1,2,3,4
+```
+
+
+```{r}
+library(lookr)
+library(dplyr)
+library(mytools)
+library(tidyr)
+library(ggplot2)
+library(purrr)
+```
+
+```{r}
+# sdk <- lookr::LookerSDK$new(configFile = "/Users/tnazal/Documents/looker.ini")
+# d2 <- sdk$runInlineQuery(model = "nypr_dw_v2",
+#                            view = "on_demand_listens_unique",
+#                            fields = c("show.show_name_ondemand",
+#                                       "story.story_title",
+#                                       "story.first_publish_date"#,
+#                                       #"on_demand_listens_unique.download_date"
+#                                       ),
+#                             #filters = list("on_demand_listens_unique.download_date" <= "2018-05-01",
+#                              #              "show.show_name_ondemand" = "Caught"),
+#                            limit = 500
+#                            # queryTimezone = "America/Los_Angeles"
+#                            )
+# d2
+```
+
+
+
+```{r}
+normalize_1 <- function(x){
+  mi <- min(x)
+  ma <- max(x)
+  return((x - mi)/(ma - mi))
+}
+```
+
+```{r}
+d <- read.csv("binge_comp.csv")
+colnames(d) <- c("date", "show", "story", "publish_date", "downloads")
+d[, grep("date", colnames(d))] <- lapply(d[, grep("date", colnames(d))],
+                                        function(x) as.Date(x, format = "%Y-%m-%d"))
+feedwarmers <- d %>% group_by(show) %>%
+    filter(publish_date == min(publish_date)) %>% 
+    summarise(ep = story[1]) %>% pull(ep)
+
+d <- d %>% 
+  filter(story %!in% feedwarmers)
+d <- d %>% filter(!grepl("A Word From Rog|Introducing ‘Caught’: Our New Podcast|Get Ready for the Third Dope Queen!|See You Next Tuesday|We Interrupt This Program|Introducing Another Podcast for Kids! Pickle:|Trump Org Removes Presidential Seal from Golf Course|Would you debate gravity|For Your Consideration: The New, Old White Suprem",
+      d$story)) %>% 
+  mutate(publish_date = if_else(story == "The \"King of Debt\"? He Pays Cash.", as.Date("2018-05-11"), publish_date))
+d <- d %>% mutate(publish_date = if_else(grepl("Bonus Episode with Big Cat \\(Dan Katz\\) of Barstool", story), as.Date("2018-06-05", format = "%Y-%m-%d"), as.Date(publish_date)))
+```
+
+
+```{r}
+d_episodes_7 <- d %>% group_by(show, story) %>% 
+  filter(date <= min(publish_date) + 8) %>% 
+  summarise(downloads = sum(downloads),
+            publish_date = min(publish_date)) %>% 
+  arrange(show, publish_date, story) %>%
+  group_by(show) %>% 
+  mutate(ep_n = row_number(),
+         normal_d = normalize_1(downloads),
+         show_type = ifelse(show %in% c("American Fiasco",
+                                        "This Podcast Has Fleas",
+                                        "Pickle",
+                                        "Aftereffect"),
+                            "Binge", "Seasonal")) %>% 
+  arrange(show, publish_date, story) %>%
+  filter(!grepl("Phoebe’s on Michelle’s Couch|Late Night Whenever For The D|Sooo Many White Guys:",
+                              story)) #filter episodes released on 2DQ's feed
+
+
+d_episodes_20 <- d %>% group_by(show, story) %>% 
+  filter(date <= min(publish_date) + 20) %>% 
+  summarise(downloads = sum(downloads),
+            publish_date = min(publish_date)) %>% 
+  arrange(show, publish_date, story) %>%
+  group_by(show) %>% 
+  mutate(ep_n = row_number(),
+         normal_d = normalize_1(downloads),
+         show_type = ifelse(show %in% c("American Fiasco",
+                                        "This Podcast Has Fleas",
+                                        "Pickle",
+                                        "Aftereffect"),
+                            "Binge", "Seasonal")) %>% 
+  arrange(show, publish_date, story) %>%
+  filter(!grepl("Phoebe’s on Michelle’s Couch|Late Night Whenever For The D|Sooo Many White Guys:",
+                              story)) #filter episodes released on 2DQ's feed
+
+
+d_episodes_all <- d %>% group_by(show, story) %>% 
+  summarise(downloads = sum(downloads),
+            publish_date = min(publish_date)) %>% 
+  arrange(show, publish_date, story) %>%
+  group_by(show) %>% 
+  mutate(ep_n = row_number(),
+         normal_d = normalize_1(downloads),
+         show_type = ifelse(show %in% c("American Fiasco",
+                                        "This Podcast Has Fleas",
+                                        "Pickle",
+                                        "Aftereffect"),
+                            "Binge", "Seasonal")) %>%
+  arrange(show, publish_date, story) %>%
+  filter(!grepl("Phoebe’s on Michelle’s Couch|Late Night Whenever For The D|Sooo Many White Guys:",
+                              story)) #filter episodes released on 2DQ's feed
+
+
+
+comp <- cbind(d_episodes_20 %>% ungroup() %>% 
+                select(show_type, show, story,
+                       ep_n, publish_date, downloads_20 = downloads,
+                       normal_d_20 = normal_d),
+              d_episodes_7 %>% ungroup() %>% 
+                select(downloads_7 = downloads,
+                       normal_d_7 = normal_d))
+
+comp <- comp %>% mutate(change = (downloads_20 - downloads_7) / downloads_20)
+```
+
+```{r, fig.width=12, fig.height=10}
+ggplot(d_episodes_7 %>% 
+         filter(!(show == "Caught" & ep_n == 1),
+                !(show == "Late Night Whenever" &  ep_n %in% c(6,9)),
+                show %!in% c("2 Dope Queens", "More Perfect", "Stay Tuned with Preet")),
+       aes(x = ep_n,
+           y = downloads,
+           color = show_type)) +
+  labs(title = "Show Comparison By Episode Download Curves (All). Binge/Seasonal. Removed Outliers.",
+       x = "Episode Number",
+       y = "0-1 Normalized Downloads",
+       color = "Type",
+       caption = " Caught ep1 removed for Ear Hustle promo skew.\n LTN eps 6 and 9 removed because they appeared on 2DQ feed. \n SMWG not showing episodes in the 2DQ feed. \n Preet, 2DQ, More PErfect removed for scale.") +
+  geom_line() +
+  geom_point() +
+  stat_smooth(method = "lm",
+              se = F) +
+  facet_wrap(~show, scales = "free_x") +
+  scale_x_continuous(breaks = 1:16, labels = 1:16) +
+  my_theme +
+  theme(legend.position = "bottom",
+        plot.caption = element_text(size = 6, hjust = 0)) +
+  theme(legend.position = "bottom",
+        panel.grid.major.y = element_line(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())
+```
+
+```{r, fig.width=15, fig.height=10}
+ggplot(d_episodes_7 %>% 
+         filter(!(show == "Caught" & ep_n == 1),
+                !(show == "Late Night Whenever" &  ep_n %in% c(6,9))),
+       aes(x = ep_n,
+           y = normal_d,
+           color = show_type)) +
+  labs(title = "Show Comparison By Episode Download Curves (First 7 Days). Binge/Seasonal",
+       x = "Episode Number",
+       y = "0-1 Normalized Downloads",
+       color = "Type") +
+  geom_line() +
+  geom_point() +
+  stat_smooth(method = "lm",
+              se = F) +
+  facet_wrap(~show, scales = "free") +
+  scale_x_continuous(breaks = 1:max(d_episodes_7$ep_n), labels = 1:max(d_episodes_7$ep_n)) +
+  my_theme +
+  theme(legend.position = "bottom",
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())
+```
+
+
+
+
+```{r, fig.width=12, fig.height=10}
+ggplot(d_episodes_all %>% 
+         filter(!(show == "Caught" & ep_n == 1),
+                !(show == "Late Night Whenever" &  ep_n %in% c(6,9))),
+       aes(x = ep_n,
+           y = normal_d,
+           color = show_type)) +
+  labs(title = "Show Comparison By Episode Download Curves (All). Binge/Seasonal. Removed Outliers.",
+       x = "Episode Number",
+       y = "0-1 Normalized Downloads",
+       color = "Type",
+       caption = " Caught ep1 removed for Ear Hustle promo skew.\n LTN eps 6 and 9 removed because they appeared on 2DQ feed. \n SMWG not showing episodes in the 2DQ feed") +
+  geom_line() +
+  geom_point() +
+  stat_smooth(method = "lm",
+              se = F) +
+  facet_wrap(~show, scales = "free") +
+  scale_x_continuous(breaks = 1:16, labels = 1:16) +
+  my_theme +
+  theme(legend.position = "bottom",
+        plot.caption = element_text(size = 6, hjust = 0)) +
+  theme(legend.position = "bottom",
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())
+```
+
+```{r, fig.width=12, fig.height=10}
+ggplot(comp,
+       aes(x = ep_n,
+           y = change,
+           color = show_type)) +
+  labs(title = "Show Comparison By Episode Evolution Curves (First 7/ First 20 Days). Binge/Seasonal. Removed Outliers.",
+       x = "Episode Number",
+       # y = "0-1 Normalized Downloads",
+       color = "Type",
+       caption = " Caught ep1 removed for Ear Hustle promo skew.\n LTN eps 6 and 9 removed because they appeared on 2DQ feed. \n SMWG not showing episodes in the 2DQ feed") +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~show, scales = "free_x") +
+  scale_x_continuous(breaks = 1:16, labels = 1:16) +
+  my_theme +
+  theme(legend.position = "bottom",
+        plot.caption = element_text(size = 6, hjust = 0)) +
+  theme(legend.position = "bottom",
+        panel.grid.major.y = element_line(color = "black"),
+        panel.grid.minor.y = element_line(color = "grey", linetype = "dashed"),
+        # axis.ticks.y = element_blank(),
+        # axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())
+```
+
+
+
+```{r}
+eps_normal <- d %>% 
+  group_by(show, story) %>%
+  arrange(show, story,date) %>% 
+  mutate(normal_d = normalize_1(downloads),
+         day_n = row_number(date)) %>% 
+  group_by(show, day_n) %>% 
+  mutate(show_mean_day = mean(normal_d))
+```
+
+
+```{r, fig.width=12, fig.height=10}
+ggplot(eps_normal %>% filter(day_n < 29)) + 
+  geom_line(aes(x = day_n,
+                y = normal_d,
+                group = story),
+            color = "grey") +
+  geom_line(aes(x = day_n,
+                y = show_mean_day,
+                group = show),
+            color = "black") +
+  stat_smooth(aes(x = day_n,
+                 y = normal_d),
+                 se = F,
+              linetype = "dashed") +
+  facet_wrap(~show) +
+  my_theme +
+  theme(legend.position = "bottom",
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())
+```
+
+```{r}
+ggplot(eps_normal %>% filter(show == "American Fiasco")) + 
+  geom_line(aes(x = day_n,
+                y = downloads,
+                group = story),
+            color = "grey") +
+  stat_smooth(aes(x = day_n,
+                 y = downloads),
+                 se = F,
+              linetype = "dashed") +
+  facet_wrap(~publish_date) +
+  my_theme +
+  theme(legend.position = "bottom")
+```
+
+#First 7 days comparison slopes
+
+```{r}
+fit_part <- function(formu, x) {
+  formu <- formula(formu)
+  lm(formu, data = x)
+}
+
+model_7 <- d_episodes_7 %>%
+  filter(!(show == "Caught" & ep_n == 1),
+         !(show == "Late Night Whenever" &  ep_n %in% c(6,9))) %>% 
+  split(.$show) %>% 
+  map(~lm(normal_d ~ ep_n, data = .)) %>% 
+  map(coefficients) %>% 
+  map("ep_n")
+  
+
+```
+

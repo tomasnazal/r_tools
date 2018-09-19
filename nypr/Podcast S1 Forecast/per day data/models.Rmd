@@ -1,0 +1,327 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+#Packages and Functions
+```{r}
+#load Packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+library(lubridate)
+library(plotly)
+library(zoo)
+library(purrr)
+library(gtools)
+library(data.table)
+library(randomForest)
+#library(rJava)
+library(bartMachine)
+library(plm)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+```
+
+```{r}
+#Functions
+##0-1 normalization 
+normalize_scalar1 <- function(x, na.rm = T)
+                        {x / sqrt(sum(x^2, na.rm = na.rm))}
+#not in
+'%!in%' <- function(x,y) !('%in%'(x,y))
+```
+
+#read, Transform, Aggregate, Merge
+##read data
+```{r}
+#main set 
+d <- fread("ondemand_clean.csv") %>% 
+  mutate(month_date = as.Date(paste("01-", month, sep = ""), format = "%d-%b-%Y"))
+
+#show data (valid shows only)
+show_data <- read.csv("show_data.csv")
+show_data$show <- ifelse(show_data$show == "Radiolab Presents: More Perfect",
+                           "More Perfect", as.character(show_data$show))
+show_data[43,1] <- "Late Night Whenever"
+```
+
+##transform data / new variables
+```{r}
+#keep shows that make sense
+d <- d %>% filter(show %in% show_data$show)
+
+#format date variables
+d[, grep("date", colnames(d))] <- lapply(d[, grep("date", colnames(d))],
+                                        function(x) as.Date(x, format = "%Y-%m-%d"))
+
+#make week date a monday
+d$week_date <- floor_date(d$week_date, "weeks") + 1
+
+#extract names of fedd warmers
+##by episode, published to podcast
+d_eps <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, story) %>%
+  summarise(story_start_date = story_start_date[1],
+            downloads = sum(downloads),
+            start_month = format(story_start_date, "%b-%Y"),
+            start_year = year(story_start_date),
+            start_week = week(story_start_date),
+            duration = story_duration[1],
+            show_start_date = show_start_date[1]) %>%
+  arrange(show, story_start_date) %>% 
+  mutate(start_weekday = weekdays(story_start_date))
+
+temp <- d_eps %>%
+  filter(show_start_date >= as.Date("2016-03-01"),
+         show != "The New Yorker Comment") %>%
+  arrange(show, story_start_date) %>%
+  mutate(n = row_number()) %>%
+  filter(n < 2)
+
+#fix show start date for S01 available shows
+d <- d %>% filter(story %!in%  temp$story) %>% group_by(show) %>% 
+  mutate(show_start_date = if_else(show_start_date >= min(d$date),
+                                  as.Date(min(date)), as.Date(show_start_date)))
+#make show start week varible 
+d$show_start_week <- floor_date(d$show_start_date, "weeks") + 1
+d <- d %>% filter(story %!in%  temp$story) %>% group_by(show, story) %>% 
+  mutate(story_start_day_alt = min(date)) 
+
+#complete data for show?
+d$show_complete_data <- ifelse(d$show_start_date >= as.Date("2016-03-01"),
+                               1,0)
+```
+
+##aggregations
+```{r}
+#complete show reference
+complete_shows <- d %>% filter(show_complete_data == 1) %>% 
+  group_by(show) %>%
+  summarise(start_date = min(show_start_date)) %>%
+  arrange(start_date)
+
+
+
+##by month, published to podcast
+d_month <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, month) %>%
+  summarise(downloads = sum(downloads),
+            n_eps_month = length(which(d_eps$start_month == month[1] & 
+                                         d_eps$show == show[1])),
+            running_months = difftime(date[1], show_start_date[1], units = "months") + 1,
+            avg_ep_length = mean(story_duration),
+            show_start_date = show_start_date[1]) %>%
+  arrange(show, month_date)
+
+##by week, published to podcast
+d_week <- d %>% #filter(published_to_podcast == 1,
+                      #story %!in%  temp$story
+                      #) %>%
+  arrange(show, date) %>%
+  #group_by(show) %>% 
+ # mutate(show_start_date = if_else(show_start_date >= as.Date("2016-03-01"),
+  #                                 min(story_start_day_alt), show_start_date)) %>% 
+  group_by(show, week_date) %>%
+  summarise(downloads = sum(downloads),
+            week_episodes = sum(published_that_day),
+            avg_ep_length = mean(story_duration),
+            show_start_date = show_start_date[1],
+            running_weeks = round(difftime(date[1], show_start_date[1], units = "weeks") + 1, 2)) %>%
+  arrange(show, week_date)
+  
+d_week <- d_week[-(which(d_week$show %in% c("A Piece of Work", "Nancy", "The New Yorker Comment") &
+                   d_week$week_episodes == 0 & d_week$running_weeks == 1)), ]
+```
+
+
+##Merge main set with show data
+```{r}
+d_week <- d_week %>% left_join(show_data)
+d_week$show_start_month <- as.factor(lubridate::month(as.Date(d_week$show_start_date), abbr = T))
+class(d_week$age_avg)
+```
+
+
+
+#Models
+##case 0: all cases
+###Linear
+```{r}
+d_week$itunes_genre <- relevel(d_week$itunes_genre, "society and culture")
+linear0 <- lm(downloads~ week_episodes + avg_ep_length +
+                as.factor(show_start_month) +
+                running_weeks + station +
+                itunes_genre + 
+                X12mo_searches_max*running_weeks +
+                as.numeric(as.character(age_avg)) +
+                klout_avg*running_weeks + twitter_max*running_weeks +
+                host_has_previous_show + is_spinoff + is_brand + it_airs, data = d_week)
+```
+
+```{r}
+summary(linear0)
+
+```
+
+
+###Random Forest
+
+```{r}
+trainingrf0 <- d_week %>% mutate(show_start_month = as.factor(show_start_month)) %>% 
+  select(downloads, week_episodes, avg_ep_length, running_weeks, show_start_month,
+         running_weeks, station, X12mo_searches_max, age_avg, klout_avg, itunes_genre,
+         twitter_max, host_has_previous_show, is_spinoff, is_brand, it_airs)
+
+trf0 <- trainingrf0[complete.cases(trainingrf0),]
+trf0$show_start_month <- as.factor(trf0$show_start_month)
+rf0 <- randomForest(downloads~ week_episodes + avg_ep_length + show_start_month + running_weeks + station + itunes_genre + 
+                X12mo_searches_max*running_weeks + age_avg + klout_avg*running_weeks + twitter_max*running_weeks +
+                host_has_previous_show + is_spinoff + is_brand + it_airs, data = trf0, importance = T)
+```
+
+```{r, fig.width=10, fig.height= 4}
+varImpPlot(rf0)
+```
+
+#Fixed effects
+```{r}
+fixed1 <- plm(downloads~ week_episodes + avg_ep_length +
+                as.numeric(show_start_month) +
+                running_weeks + station +
+                itunes_genre + 
+                X12mo_searches_max*running_weeks +
+                as.numeric(as.character(age_avg)) +
+                klout_avg*running_weeks + twitter_max*running_weeks +
+                host_has_previous_show + is_spinoff + is_brand + it_airs, index = c("show", "week_date"), model = "within", data = d_week)
+```
+
+```{r}
+summary(fixed1)
+```
+
+
+
+##First Training: incomplete data
+```{r}
+d_week$age_avg <- as.numeric(as.character(d_week$age_avg))
+training1 <- d_week %>% filter(show %!in% complete_shows$show)
+trainingrf1 <- d_week %>% filter(show %!in% complete_shows$show) %>%
+  select(downloads, week_episodes, avg_ep_length, running_weeks, show_start_month,
+         running_weeks, station, X12mo_searches_max, age_avg, klout_avg, itunes_genre,
+         twitter_max, host_has_previous_show, is_spinoff, is_brand, it_airs)
+
+trf1 <- trainingrf1[complete.cases(trainingrf1),]
+```
+
+###Linear
+```{r}
+linear1 <- lm(downloads~ week_episodes + avg_ep_length +
+                as.numeric(show_start_month) +
+                running_weeks + station +
+                itunes_genre + 
+                X12mo_searches_max*running_weeks +
+                as.numeric(as.character(age_avg)) +
+                klout_avg*running_weeks + twitter_max*running_weeks +
+                host_has_previous_show + is_spinoff + is_brand + it_airs, data = training1)
+```
+
+```{r}
+summary(linear1)
+```
+
+
+###Random Forest
+
+```{r}
+rf1 <- randomForest(downloads~ week_episodes + avg_ep_length + show_start_month + running_weeks + station + itunes_genre + 
+                X12mo_searches_max*running_weeks + age_avg + klout_avg*running_weeks + twitter_max*running_weeks +
+                host_has_previous_show + is_spinoff + is_brand + it_airs, data = trf1)
+```
+
+
+##First testing: Complete Data
+```{r}
+testing1 <- d_week %>% filter(show %in% complete_shows$show) %>% group_by(show) %>% filter(running_weeks == min(running_weeks))
+testing1_lin <- testing1 %>% filter(itunes_genre %!in% c("comedy", "governent & organizations", "kids & family"))
+
+```
+
+```{r}
+a <- data.frame(show = testing1_lin$show, dl = testing1_lin$downloads, pred = predict(linear1, newdata = testing1_lin))
+```
+
+```{r}
+b <- data.frame(show = testing1$show, dl = testing1$downloads, pred = predict(rf1, newdata = testing1))
+```
+
+```{r}
+varImpPlot(rf1)
+```
+
+###Predict
+###MAPE, MSE
+
+##Second Training: Up to "A Piece of Work"
+```{r}
+training2 <- d_week %>% filter(show %!in% complete_shows[11:16,]$show)
+trainingrf2 <- d_week %>% filter(show %!in% complete_shows[11:16,]$show) %>%
+  select(downloads, week_episodes, avg_ep_length, running_weeks, show_start_month,
+         running_weeks, station, X12mo_searches_max, age_avg, klout_avg, itunes_genre,
+         twitter_max, host_has_previous_show, is_spinoff, is_brand, it_airs)
+
+trf2 <- trainingrf2[complete.cases(trainingrf2),]
+```
+
+###Linear
+```{r}
+linear2 <- lm(downloads~ week_episodes + avg_ep_length +
+                #show_start_month +
+                running_weeks + station +
+                #itunes_genre + 
+                X12mo_searches_max*running_weeks +
+                as.numeric(age_avg) +
+                klout_avg*running_weeks + twitter_max*running_weeks +
+                host_has_previous_show + is_spinoff + is_brand + it_airs, data = training2)
+```
+
+```{r}
+summary(linear2)
+```
+
+
+###Random Forest
+```{r}
+rf2 <- randomForest(downloads~ week_episodes + avg_ep_length + show_start_month + running_weeks + station + itunes_genre + 
+                X12mo_searches_max*running_weeks + age_avg + klout_avg*running_weeks + twitter_max*running_weeks +
+                host_has_previous_show + is_spinoff + is_brand + it_airs, data = trf2)
+```
+
+##Second Testing: After "A Piece of Work"
+```{r}
+testing2 <- d_week %>% filter(show %in% complete_shows[1:11,]$show) %>% group_by(show) %>% filter(running_weeks == min(running_weeks))
+testing2_lin <- testing1 %>% filter(itunes_genre %!in% c("comedy", "governent & organizations", "kids & family"))
+
+```
+
+```{r}
+c <- data.frame(show = testing2$show, dl = testing2$downloads, pred = predict(linear2, newdata = testing2))
+```
+
+```{r}
+d <- data.frame(show = testing2$show, dl = testing2$downloads, pred = predict(rf2, newdata = testing2))
+```
+
+```{r}
+varImpPlot(rf2)
+```
+
+###Predict
+###MAPE, MSE

@@ -1,0 +1,263 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+#session level
+d <- read.csv("stanqwrq2.csv")
+colnames(d) <- c("date", "hr", "station", "cume")
+d$date <- as.Date(d$date)
+d$host <- ifelse(d$date < as.Date("2017-11-01") &
+                     d$station == "Standards","Jonathan Schwartz",
+                 ifelse(d$date >= as.Date("2017-11-01") & 
+                          d$station == "Standards", "Post",
+                        as.character(d$station)))
+d_summary <- d %>%
+  group_by(host, hr) %>% 
+  summarise(med_cume = median(cume),
+            avg_cume = mean(cume))
+
+d_summary_weekend <- d %>%
+  filter(weekdays(date) %in% c("Saturday",
+                               "Sunday")) %>% 
+  group_by(host, hr) %>% 
+  summarise(med_cume = median(cume),
+            avg_cume = mean(cume))
+
+#content level
+d_content <- read.csv("stanQxrContent.csv")
+colnames(d_content) <- c("date", "hr", "station", "cume")
+d_content$date <- as.Date(d_content$date)
+d_content$host <- ifelse(d_content$date < as.Date("2017-11-01") &
+                     d_content$station == "Standards","Jonathan Schwartz",
+                 ifelse(d_content$date >= as.Date("2017-11-01") & 
+                          d_content$station == "Standards", "Post",
+                        as.character(d_content$station)))
+d_content_summary <- d_content %>%
+  group_by(host, hr) %>% 
+  summarise(med_cume = median(cume),
+            avg_cume = mean(cume))
+
+d_content_summary_weekend <- d_content %>%
+  filter(weekdays(date) %in% c("Saturday",
+                               "Sunday")) %>% 
+  group_by(host, hr) %>% 
+  summarise(med_cume = median(cume),
+            avg_cume = mean(cume))
+```
+
+```{r}
+ggplot(d %>% filter(station == "Standards")) + 
+  geom_boxplot(aes(x = as.factor(hr),
+                   y = cume)) +
+  facet_wrap(~host,
+             nrow = 2, 
+             scales = "free_y") + 
+  my_theme
+```
+
+```{r}
+ggplot(d %>% filter(station  == "Standards")) + 
+  geom_violin(aes(x = as.factor(hr),
+                   y = cume)) +
+  facet_wrap(~host,
+             nrow = 2, 
+             scales = "free_y") + 
+  my_theme
+```
+
+```{r}
+ggplot(d_summary %>%
+         filter(host %in% c("Jonathan Schwartz", "Post")),
+       aes(x = hr,
+           y = avg_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Average Stream Starts per Day Hour By Host",
+       color = "Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(8, 18),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.9))
+```
+
+```{r}
+ggplot(d_summary %>% filter(host %in% c("Jonathan Schwartz", "Post")),
+       aes(x = hr,
+           y = med_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Median Cume per Day Hour By Host",
+       color = "Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(8, 18),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.9))
+```
+
+```{r}
+ggplot(d_summary,
+       aes(x = hr,
+           y = avg_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Average Stream Starts per Day Hour By Host",
+       color = "Station/Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(8, 18),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.85))
+```
+
+```{r}
+ggplot(d_summary,
+       aes(x = hr,
+           y = med_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Median Cume per Day Hour By Host",
+       color = "Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(8,18),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.85))
+```
+
+#Content Level
+```{r}
+ggplot(d_content_summary %>%
+         filter(host %in% c("Jonathan Schwartz", "Post")),
+       aes(x = hr,
+           y = avg_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Average Active Listeners per Day Hour By Host",
+       color = "Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(6, 12, 16),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.9))
+```
+
+```{r}
+ggplot(d_content_summary %>% filter(host %in% c("Jonathan Schwartz", "Post")),
+       aes(x = hr,
+           y = med_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Median Cume per Day Hour By Host",
+       color = "Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(8, 18),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.9))
+```
+
+```{r}
+ggplot(d_content_summary,
+       aes(x = hr,
+           y = avg_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Average Active Listeners per Day Hour By Host",
+       color = "Station/Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(10, 12, 15),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.85))
+```
+
+#Weekend
+```{r}
+ggplot(d_summary_weekend %>%
+         filter(host %in% c("Jonathan Schwartz", "Post")),
+       aes(x = hr,
+           y = avg_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Average Stream Starts per Day Hour By Host. Weekend.",
+       color = "Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(9, 17),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.9))
+```
+
+
+```{r}
+ggplot(d_content_summary_weekend %>%
+         filter(host %in% c("Jonathan Schwartz", "Post")),
+       aes(x = hr,
+           y = avg_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Average Active LIsteners per Day Hour By Host. Weekend.",
+       color = "Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(12, 16, 20),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.9))
+```
+
+
+```{r}
+ggplot(d_summary_weekend,
+       aes(x = hr,
+           y = avg_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Average Stream Starts per Day Hour By Host. Weekend.",
+       color = "Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(9, 17),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.9))
+```
+
+
+```{r}
+ggplot(d_content_summary_weekend,
+       aes(x = hr,
+           y = avg_cume,
+           color = factor(host))) +
+  labs(title = "Standards Channel, Average Active LIsteners per Day Hour By Host. Weekend.",
+       color = "Host") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = c(13, 16, 20),
+             color = "grey",
+             linetype = "dashed") +
+  scale_x_continuous(breaks = (0:23)) +
+  my_theme +
+  theme(legend.position = c(0.85,0.9))
+```

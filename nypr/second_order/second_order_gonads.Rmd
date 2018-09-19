@@ -1,0 +1,290 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(mytools)
+library(ggrepel)
+```
+
+```{r}
+d <- fread("radiolab_ep_day_total.csv")
+colnames(d) <- c("publish_date", "story", "download_date", "downloads")
+d <- mutate_at(d, grep("date", colnames(d)),
+               function(x) as.Date(x, format = "%Y-%m-%d")) %>% 
+  group_by(story) %>% arrange(publish_date, story, download_date) %>% 
+  mutate(ep_day_n = row_number(),
+         is_gonads = ifelse(story %in% c("The Primordial Journey", "Fronads",
+                                         "X & Y", "Dana", "Dutee", "Sex Ed"),
+                            T,F))
+
+#real Story start date
+d <- d %>%
+  group_by(story) %>% 
+  mutate(story_start_date1 = min(download_date))
+
+temp <- d %>% group_by(story) %>%
+  summarise(n_sdates = n_distinct(publish_date),
+            publish_date = min(publish_date),
+            story_start_date1 = min(story_start_date1),
+            timediff = difftime(story_start_date1, publish_date),
+            orig_dls = ifelse(length(which(download_date == min(publish_date))) == 0, NA,
+                              downloads[which(download_date == min(publish_date))]),
+            new_dls = downloads[which(download_date == story_start_date1[1])][1]) %>%
+  mutate(story_start_date_real =  if_else(is.na(orig_dls) | n_sdates > 1, story_start_date1,
+                                  publish_date)) %>% 
+  filter(timediff != 0 |
+         n_sdates > 1)
+
+d <- d %>%
+  left_join(temp %>% select(story, story_start_date_real)) %>% 
+  mutate(publish_date = as.Date(if_else(!is.na(story_start_date_real),
+                                   story_start_date_real,
+                                   publish_date))) %>% 
+  select(-story_start_date_real,
+         story_start_date1 )
+rm(temp)
+```
+
+```{r, fig.height=7, fig.width=14}
+a <- d %>% group_by(story) %>%
+  filter(download_date <= publish_date + 30) %>% 
+  summarise(publish_date = as.Date(min(publish_date)),
+            dls = sum(downloads),
+            is_gonads = is_gonads[1]) %>%
+  arrange( publish_date) %>% 
+  mutate(lag_day_1 = as.numeric(publish_date - lag(publish_date)),
+         lag_day_2 = as.numeric(publish_date - lag(publish_date, 2)),
+         lag_day_3 = as.numeric(publish_date - lag(publish_date, 3)),
+         dls_lag_1 = lag(dls),
+         dls_lag_2 = lag(dls, 2),
+         weekday = weekdays(publish_date),
+         mean_distance = round(dls - mean(dls),0)) %>% 
+  ungroup() %>%
+  mutate(publish_month = month.abb[month(publish_date)],
+         publish_year = as.factor(year(publish_date))) %>%
+  mutate(ref = mean(lag_day_1, na.rm = T),
+    z_score = (lag_day_1-mean(lag_day_1, na.rm = T)) /
+      sd(lag_day_1, na.rm = T),
+    radiolab_presents = grepl("Radiolab Presents", story))
+```
+
+```{r, fig.height=7, fig.width=14}
+ggplot(a  %>% filter(publish_date > "2016-04-01",
+         story != "Truth Trolls"),
+       aes(x = publish_date, y = dls)) +
+  labs(title = "Episode release Schedule and Downloads in the first 30 Days. Radolab.") +
+  geom_line(aes(color = lead(lag_day_1)),
+            size = 2) +
+  geom_text_repel(aes(label = strtrim(story, 20)),
+            angle = 90,
+            size = 3,
+            direction = "y") +
+  scale_color_continuous(high = "#2f79ef",
+                         low = "#d11f1f") +
+  theme(axis.text.x = element_text(angle = 45)) +
+  my_theme +
+  theme(legend.position = "bottom")
+```
+
+```{r, fig.height=7, fig.width=14}
+ggplot(a  %>% filter(publish_date > "2016-04-01",
+         story != "Truth Trolls"),
+       aes(x = publish_date, y = dls)) +
+  labs(title = "Episode release Schedule and Downloads in the first 30 Days. Radolab.") +
+  geom_line(color = "#23a8ef",
+            size = 2) +
+  geom_rect(xmin = min(gonads_forplot$publish_date) - 5,
+            xmax = max(gonads_forplot$publish_date) + 3,
+            ymin = min(gonads_forplot$dls) - 10000,
+            ymax = max(gonads_forplot$dls) + 100000,
+            fill = NA,
+            color = "red",
+            linetype = "dashed") +
+  geom_label_repel(aes(label = strtrim(story, 20)),
+            force =15,
+            label.padding = 0.1,
+            size = 3,
+            direction = "y") +
+  theme(axis.text.x = element_text(angle = 45)) +
+  my_theme +
+  theme(legend.position = "bottom")
+```
+
+```{r, fig.height=7, fig.width=14}
+gonads_forplot <- a %>% filter(is_gonads)
+
+ggplot(a  %>% filter(publish_date >= "2018-01-01",
+         story != "Truth Trolls"),
+       aes(x = publish_date, y = dls)) +
+  labs(title = "Episode release Schedule and Downloads in the first 30 Days. Radolab.") +
+  geom_line(color = "#23a8ef",
+            size = 2) +
+  geom_rect(xmin = min(gonads_forplot$publish_date) - 5,
+            xmax = max(gonads_forplot$publish_date) + 3,
+            ymin = min(gonads_forplot$dls) - 10000,
+            ymax = max(gonads_forplot$dls) + 100000,
+            fill = NA,
+            color = "grey",
+            linetype = "dashed") +
+  geom_label_repel(aes(label = strtrim(story, 20)),
+            force = 5,
+            label.padding = 0.1,
+            size = 3,
+            direction = "y") +
+  theme(axis.text.x = element_text(angle = 45)) +
+  my_theme +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+a_reg <- filter(a, publish_date > "2016-03-01",
+                 story != "Truth Trolls") %>% 
+  mutate(weekday = relevel(as.factor(weekday), "Monday"),
+         publish_month = relevel(as.factor(publish_month), "Jan"))
+```
+
+```{r}
+a_reg2 <- a_reg %>% mutate(publish_month = as.factor(publish_month),
+                           publish_year = as.factor(publish_year),
+                           radiolab_presents = as.numeric(radiolab_presents))
+summary(linear_rl <- lm(dls~ lag_day_1 + lag_day_2 + radiolab_presents  + weekday + publish_month + publish_year, data = a_reg2))
+```
+
+```{r}
+summary(linear1_rl <- lm(dls~ lag_day_1*lag_day_2 + radiolab_presents  + weekday + publish_month + publish_year, data = a_reg2))
+```
+
+```{r}
+summary(lm(dls~ lag_day_1 + lag_day_2 + lag_day_3 + radiolab_presents  + weekday + publish_month + publish_year, data = a_reg))
+```
+
+```{r}
+summary(lm(dls~ lag_day_1 + radiolab_presents  + weekday + publish_month + publish_year, data = a_reg))
+```
+
+```{r}
+summary(lm(dls~ lag_day_1*lag_day_2+ radiolab_presents  + weekday + publish_month + publish_year, data = a_reg))
+```
+
+
+```{r}
+summary(is_gonads <- lm(dls~ is_gonads  + weekday + publish_month + publish_year, data = a_reg ))
+```
+```{r, fig.height=8, fig.width=7}
+g_rl_gonads <- summary(is_gonads)
+
+
+viz_gonads <- data.frame(var = names(g_rl_gonads$coefficients[,1]),
+                  coef = g_rl_gonads$coefficients[,1],
+                  low = -2*g_rl_gonads$coefficients[,2],
+                  high = 2*g_rl_gonads$coefficients[,2])
+viz_rl_gonads <- viz_gonads %>% filter(var != "(Intercept)")
+viz_rl_gonads$var <- factor(viz_rl_gonads$var,levels = c("is_gonadsTRUE", "weekdayTuesday" , "weekdayWednesday",
+                                     "weekdayThursday", "weekdayFriday", "weekdaySaturday", "weekdaySunday",
+                                     "publish_monthFeb", "publish_monthMar", "publish_monthApr", "publish_monthMay",
+                                     "publish_monthJun", "publish_monthJul", "publish_monthAug", "publish_monthSep",
+                                     "publish_monthOct", "publish_monthNov", "publish_monthDec",
+                                     "publish_year2017", "publish_year2018"))
+
+ggplot(viz_rl_gonads,
+       aes(x = var,
+           y = coef)) +
+  labs(title = "Linear Regression Coefficients and 95% Confidence Intervals. Radiolab. Gonads.",
+       caption = "Dependent Variable: Downloads in the First 30 Days.",
+       x = "Variable",
+       y = "Coefficient Value") +
+  geom_hline(yintercept = 0,
+             linetype = "dashed",
+             color = "grey"
+             ) +
+  scale_color_manual(values = c("#f44141", "#4292f4")) +
+  geom_point(aes(color = coef > 0)) +
+  # geom_errorbar(aes(ymin = coef + low,
+  #                   ymax = coef + high,
+  #                   color = coef > 0)) +
+  geom_segment(aes(x = var, xend = var,
+                   y = coef + low, yend = coef + high,
+                   color = coef > 0)) +
+  coord_flip() +
+  my_theme
+
+```
+
+```{r}
+hist(a_reg$lag_day_1, breaks = 20, main = "Episode Distance. Radiolab.")
+```
+```{r}
+hist(a_reg$dls, breaks = 74, main= "Episode Downloads. Radiolab.")
+```
+
+
+
+```{r}
+ggplot(a, aes(x = lag_day_1,
+              y = dls)) +
+  labs(title = "Distance From Previous Episode and Downloads. Radiolab.",
+       x = "Distance from Previous Episode",
+       y = "Downloads on the first 30 Days") +
+  stat_smooth(method = "lm") +
+  geom_jitter(size = 1,
+              alpha = 0.5) +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+jtools::interact_plot(linear1_rl, pred = lag_day_1, modx = lag_day_2,interval = T)
+```
+
+```{r, fig.height=8, fig.width=7}
+g_rl <- summary(linear_rl)
+
+
+viz <- data.frame(var = names(g_rl$coefficients[,1]),
+                  coef = g_rl$coefficients[,1],
+                  low = -2*g_rl$coefficients[,2],
+                  high = 2*g_rl$coefficients[,2])
+viz_rl <- viz %>% filter(var != "(Intercept)")
+viz_rl$var <- factor(viz_rl$var,levels = c("lag_day_1", "lag_day_2", "radiolab_presents", "weekdayTuesday" , "weekdayWednesday",
+                                     "weekdayThursday", "weekdayFriday", "weekdaySaturday", "weekdaySunday",
+                                     "publish_monthFeb", "publish_monthMar", "publish_monthApr", "publish_monthMay",
+                                     "publish_monthJun", "publish_monthJul", "publish_monthAug", "publish_monthSep",
+                                     "publish_monthOct", "publish_monthNov", "publish_monthDec",
+                                     "publish_year2017", "publish_year2018"))
+
+ggplot(viz_rl,
+       aes(x = var,
+           y = coef)) +
+  labs(title = "Linear Regression Coefficients and 95% Confidence Intervals. Radiolab.",
+       caption = "Dependent Variable: Downloads in the First 30 Days.",
+       x = "Variable",
+       y = "Coefficient Value") +
+  geom_hline(yintercept = 0,
+             linetype = "dashed",
+             color = "grey"
+             ) +
+  scale_color_manual(values = c("#f44141", "#4292f4")) +
+  geom_point(aes(color = coef > 0)) +
+  # geom_errorbar(aes(ymin = coef + low,
+  #                   ymax = coef + high,
+  #                   color = coef > 0)) +
+  geom_segment(aes(x = var, xend = var,
+                   y = coef + low, yend = coef + high,
+                   color = coef > 0)) +
+  coord_flip() +
+  my_theme
+
+```
+
+
+```{r}
+summary(linear_rl)
+```
+

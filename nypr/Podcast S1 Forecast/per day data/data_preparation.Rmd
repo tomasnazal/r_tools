@@ -1,0 +1,75 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+
+                          #########################################################################
+                          #   purpose: preparation of data imported from redshift for local use   #
+                          #   Input: (all shows and stories by day)                               #
+                          #   output: ondemand_clean.csv                                          #
+                          #########################################################################
+
+
+```
+
+
+```{r}
+#load Packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(plotly)
+library(stringr)
+library(lubridate)
+library(data.table)
+```
+
+```{r}
+#read data
+d <- fread("alls.csv", header = T,
+           stringsAsFactors = T)
+
+#reformat
+d <- d %>% select(date = colnames(d)[grep("Download Date", colnames(d))],
+                  show = colnames(d)[grep("Show Name", colnames(d))],
+                  story = colnames(d)[grep("Story Title", colnames(d))],
+                  downloads = colnames(d)[grep("Distinct Downloads", colnames(d))],
+                  story_start_date = colnames(d)[grep("First Publish.Date", colnames(d))],
+                  show_start_date = colnames(d)[grep("Show Start Date", colnames(d))],
+                  is_active = colnames(d)[grep("Show Is Active Show", colnames(d))],
+                  is_active_wnyc = colnames(d)[grep("Is Active WNYC Show", colnames(d))],
+                  is_active_wnycstudios = colnames(d)[grep("Is Active WNYC Studios", colnames(d))],
+                  story_type = colnames(d)[grep("Story Type", colnames(d))],
+                  published_to_podcast = colnames(d)[grep("Publish to Podcasts", colnames(d))],
+                  story_duration = colnames(d)[grep("Demand Length", colnames(d))])
+d <- as.data.frame(d)
+##make "Yes/No" vars dummies
+d[,c(grep("is|published_to", colnames(d)))] <- apply(d[,c(grep("is|published_to",
+                                                               colnames(d)))],2,function(x) ifelse(x == "Yes", T, F))
+##format date
+d[,c(grep("start|date", colnames(d)))] <- lapply(d[,c(grep("start|date", colnames(d)))],
+                                                function(x) as.Date(x))
+##month-year variable 
+d$month <- format(d$date, "%b-%Y")
+
+#year/week variable
+d <- d %>% 
+  mutate(week = week(date),
+         year = year(date)) %>% 
+  group_by(year, week) %>% 
+  mutate(week_date = date[1])
+
+#Day story publication flag
+d$published_that_day <- ifelse(d$story_start_date == d$date, T, F)
+
+##numeric downloads
+d$downloads <- gsub(",", "", d$downloads)
+d$downloads <- as.numeric(as.character(d$downloads))
+
+write.csv(d, "ondemand_clean.csv", row.names = F)
+```
+
+

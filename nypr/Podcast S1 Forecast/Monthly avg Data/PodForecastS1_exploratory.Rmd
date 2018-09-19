@@ -1,0 +1,152 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(ggplotly)
+library(stringr)
+library(lubridate)
+```
+
+```{r}
+#Import data
+d <- read.csv("PerMonthUnique.csv", header = T)
+ref <- read.csv("PerYearReference.csv")
+```
+
+```{r}
+#Replace empty spaces with NA
+d <- as.data.frame(apply(d, 2, function(x) ifelse(x == "", NA, x)))
+#Reshape data for tidy dataset
+d <- gather(d,
+            key = "show",
+            value = "downloads",
+            2:ncol(d))
+
+#Month as date
+d$MONTH <- as.character(d$MONTH)
+for(i in 1:nrow(d)){
+    d[i,"MONTH"] <-  gsub("[^//]+$",
+                          paste(20,str_extract(d$MONTH[i], "[^//]+$"),
+                                sep = ""),
+                          d$MONTH[i]) 
+}
+
+d$MONTH <- as.Date(d$MONTH, "%m/%d/%Y")
+
+#downloads as numeric
+d$downloads <- as.numeric(gsub(",", "", d$downloads))
+
+#Keep only dates with shows
+d2 <- d %>% filter(!is.na(downloads))
+
+```
+
+```{r}
+#What podcasts can I use for modeling first season
+d2 <- d2 %>%
+      group_by(show) %>% 
+      filter(min(MONTH) >= as.Date("2013-01-01")) %>%
+      mutate(start_month = min(MONTH),
+             start_year = year(start_month),
+             lowest_month = min(downloads),
+             highest_month = max(downloads)) %>% 
+      ungroup()
+```
+
+
+
+
+
+
+
+
+#Exploratory Graphs
+```{r}
+#One per show (All)
+ggplot(d %>% filter(!is.na(downloads)),
+       aes(x = MONTH,
+           y = downloads)) +
+    geom_line(aes(group = show),
+                  color = "grey") +
+    stat_summary(fun.y = "mean",
+                 geom = "line",
+                 color = "blue") +
+    #geom_text(data = d %>%
+     #           filter(!is.na(downloads)) %>% 
+      #          group_by(show) %>% 
+       #         summarise(fin = max(MONTH),
+        #                  point = downloads[length(downloads)]),
+         #     aes(x = fin,
+          #        y = point,
+           #       label = show)) +
+    theme(legend.position = "none",
+          panel.background = element_blank(),
+          panel.grid = element_blank())
+```
+
+```{r}
+#One per show (first season available)
+
+#text geom
+text_grpah1 <- 
+    geom_text_repel(data = d2 %>%
+                filter(!is.na(downloads)) %>% 
+                group_by(show) %>% 
+                summarise(fin = max(MONTH),
+                          point = downloads[length(downloads)]),
+              aes(x = fin,
+                  y = point,
+                  label = show),
+              size = 2,
+              segment.size = 0.2,
+              segment.alpha = 0.5,
+              xlim = c(as.Date("2017-12-01"), NA),
+              hjust = 1)
+
+#plot
+ggplot(d2 %>% filter(!is.na(downloads)),
+       aes(x = MONTH,
+           y = downloads)) +
+    geom_line(aes(group = show, color = show)) +
+    stat_summary(fun.y = "mean",
+                 geom = "line",
+                 color = "blue") +
+  #text_grpah1 +
+  coord_cartesian(xlim = c(min(d2$MONTH), as.Date("2018-10-01"))) +
+  #scale_y_continuous(limits = c(0,1000))+
+    theme(legend.position = "none",
+          panel.background = element_blank(),
+          panel.grid = element_blank())
+```
+
+```{r}
+#Average 
+ggplot(d %>% filter(!is.na(downloads)),
+       aes(x = MONTH,
+           y = downloads)) +
+    stat_summary(fun.y = "mean",
+                 geom = "line",
+                 color = "blue") +
+    theme(legend.position = "none",
+          panel.background = element_blank(),
+          panel.grid = element_blank())
+```
+
+```{r}
+#One graph per show 
+for(i in unique(d2$show)){
+    print(ggplot(d2 %>% filter(!is.na(downloads), show == i), aes(x = MONTH,
+              y = downloads)) +
+              labs(title = i) +
+        geom_line() +
+        theme(legend.position = "none",
+              plot.title = element_text(vjust = 0.5)))
+}
+```
+

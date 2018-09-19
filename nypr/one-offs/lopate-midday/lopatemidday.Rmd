@@ -1,0 +1,49 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+lopmid <- read.csv("lopatemidday.csv")
+colnames(lopmid) <- c("date", "show", "downloads", "listeners")
+lopmid$date <- as.Date(lopmid$date)
+```
+
+```{r}
+lopmid$show <- ifelse(lopmid$date >=
+                        min(lopmid[lopmid$show == "Midday on WNYC",]$date),
+                      "Midday on WNYC", as.character(lopmid$show))
+lopmid <- lopmid %>%
+  group_by(date) %>% 
+  summarise(show = show[1],
+         downloads = sum(downloads),
+         listeners = sum(listeners))
+
+lopmid$month <- month(lopmid$date)
+lopmid$show <- relevel(as.factor(lopmid$show), ref = "The Leonard Lopate Show")
+
+lopmid$show_real <- ifelse(lopmid$date >= as.Date("2017-12-06"), "Midday on WNYC", "The Leonard Lopate Show")
+```
+
+```{r}
+summary(lm(downloads ~ show + as.factor(month), data = lopmid))
+```
+
+
+
+```{r}
+ggplot(lopmid %>% filter(date >= as.Date("2016-12-01")),
+       aes(x = date,
+           y = downloads,
+           color = show_real)) +
+  geom_line() +
+  stat_smooth() +
+  stat_smooth(aes(group = show_real),
+              color = "black",
+              method = "lm",
+              linetype = "dashed",
+              se = F) +
+  coord_cartesian(xlim = c(as.Date("2017-07-01"), max(lopmid$date))) +
+  my_theme +
+  theme(legend.position = "bottom")
+```
+

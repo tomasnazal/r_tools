@@ -1,0 +1,304 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#load Packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+library(lubridate)
+library(gtools)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#read data
+#Deprecated for now. Wroking on renedered d_seslevel.csv
+d <- read.csv("platform_events2.csv")
+d <- d %>% arrange(session_id, event_timestamp)
+d$event_timestamp <- as.POSIXct(d$event_timestamp)
+d$sess_id_in_day <- as.numeric(str_extract(d$session_id, "[^_]*$"))
+d$day_session <- str_extract(d$session_id, "^(.*[_])")
+
+d <- d %>% group_by(session_id) %>% 
+  mutate(max_part = max(session_part_id))
+
+d$action_type <- ifelse(d$action %in% c('set_position', 'start', 'resume',
+                                        'skip_15_forward', 'skip_15_back'),
+                        'play',
+                        ifelse(d$action %in% c('finish', 'pause', 'window_close',
+                                               'interrupt'),
+                               'stop',
+                               ifelse(d$action == 'page_view',
+                                      'page_view', NA)))
+
+d_seslevel <- d %>% group_by(day_session, session_id) %>% 
+  summarise(max_part = max(session_part_id),
+            max_ts = max(event_timestamp),
+            min_ts = min(event_timestamp),
+            ip = first(ip),
+            user_id = first(user_id),
+            browser_id = first(browser_id),
+            device_id = first(device_id),
+            os_id = first(os_id),
+            client_id = first(client_id),
+            user_agent = first(ip_useragent_hash)) %>% 
+  ungroup() %>% 
+  group_by(day_session) %>% 
+  mutate(n_day_sessions = length(session_id)) %>% 
+  ungroup()
+
+d_seslevel$is_single <- ifelse(d_seslevel$max_part == 1, 1, 0)
+d_seslevel$min_ts_time <- as.POSIXct(strftime(d_seslevel$min_ts,
+                                              format="%H:%M:%S"),
+                                     format="%H:%M:%S")
+d_seslevel$max_ts_time <- as.POSIXct(strftime(d_seslevel$max_ts,
+                                              format="%H:%M:%S"),
+                                     format="%H:%M:%S")
+
+#just checking
+d_aggregate <- d %>% group_by(session_id) %>%
+  summarise(n_ips = n_distinct(ip),
+            n_user_id = n_distinct(user_id),
+            n_browser_id = n_distinct(browser_id),
+            n_device_id = n_distinct(device_id),
+            n_os_id = n_distinct(os_id),
+            n_client_id = n_distinct(client_id),
+            n_user_agent = n_distinct(ip_useragent_hash))
+#write.csv(d_seslevel, "d_seslevel.csv", row.names = F)
+rm(d_aggregate)
+```
+
+```{r}
+d_seslevel <- read.csv("d_seslevel.csv")
+```
+
+
+
+```{r}
+#Check for matches in variables for posterior testing
+for(i in c("browser_id",
+           "device_id",
+           "os_id",
+           "client_id",
+           "ip",
+           "user_agent",
+           "user_id")){
+  varname <- paste(i,"matches",
+                    sep = "_")
+  d_seslevel <- d_seslevel %>%
+                  left_join(d_seslevel %>%
+                      group_by_(i) %>%
+                      summarise(!!varname := n()),
+                    by = c(i))
+           }
+```
+
+#Context
+
+```{r}
+ggplot(d_seslevel,
+       aes(x = as.factor(max_part),
+           fill = as.factor(is_single))) +
+  labs(title = "Max Number of Parts of Sessions",
+       x = "Parts") +
+  geom_bar() +
+  coord_cartesian(xlim = c(0, 20)) +
+  my_theme +
+  theme(legend.position = "bottom")
+```
+
+
+```{r}
+ggplot(d %>% filter(max_part == 1) %>% 
+         group_by(action_type, action) %>% 
+         count() %>% 
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(action = factor(action, levels = action)),
+       aes(x = action,
+           y = n / sum(n),
+           fill = action_type)) +
+  labs(title = "One Action Sessions. Action Type") +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = 
+                 paste(round((n / sum(n) * 100) , 2), "%", sep = "")
+                ),
+            size = 3,
+            nudge_y = 0.015) +
+  scale_y_continuous(labels = scales::percent) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 0.6))
+```
+
+```{r}
+ggplot(d %>% filter(max_part == 1), 
+       aes(x = sess_id_in_day)) +
+  labs(title = "One Action Sessions. session ID in day") +
+  geom_bar() +
+  my_theme 
+```
+
+```{r}
+ggplot(d_seslevel, 
+       aes(x = n_day_sessions)) +
+  labs(title = "One Action Sessions. n sessions in day for day ID") +
+  facet_wrap(~is_single, 
+             scales = "free") +
+  geom_bar() +
+  
+  my_theme 
+
+#Filter out window close, and [start actions (play), page view or play that happens after 10 pm]
+```
+
+
+#ID's 
+
+```{r}
+for(i in colnames(d_seslevel)[grepl("matches",
+                                    colnames(d_seslevel))]){
+  print(ggplot(d_seslevel %>% select(is_single,i),
+               aes(fill = as.factor(is_single))) +
+          geom_density(aes_string(x = i),
+               alpha = 0.5) +
+          my_theme +
+          theme(legend.position = "bottom"))
+  print(i)
+  print(t.test(x = d_seslevel[d_seslevel$is_single == 1, i][[1]],
+       y = d_seslevel[d_seslevel$is_single == 0, i][[1]]))
+  print(wilcox.test(x = d_seslevel[d_seslevel$is_single == 1, i][[1]],
+       y = d_seslevel[d_seslevel$is_single == 0, i][[1]]))
+  }
+
+
+```
+
+
+```{r}
+#logit
+summary(glm(as.factor(is_single) ~ browser_id_matches + device_id_matches +
+              os_id_matches + client_id_matches + ip_matches +
+              user_agent_matches + user_id_matches,
+            data = d_seslevel, family = "binomial"))
+
+```
+
+
+
+```{r}
+d_seslevel$bigmatch <- paste(d_seslevel$browser_id,
+                             d_seslevel$device_id,
+                             d_seslevel$os_id,
+                             d_seslevel$client_id,
+                             d_seslevel$user_agent_matches,
+                             sep = "")
+d_seslevel$bigmatch_ip <- paste(d_seslevel$ip,
+                                d_seslevel$browser_id,
+                                d_seslevel$device_id,
+                                d_seslevel$os_id,
+                                d_seslevel$client_id,
+                                d_seslevel$user_agent_matches,
+                                d_seslevel$user_id,
+                                sep = "")
+
+div1 <- d_seslevel %>% filter(is_single == 1)
+div0 <- d_seslevel %>% filter(is_single == 0)
+
+```
+
+
+```{r}
+d_seslevel_1 <- d_seslevel %>% filter(max_part == 1)
+d_seslevel_n1 <- d_seslevel %>% filter(max_part != 1)
+```
+
+```{r}
+print("single")
+(table( (d_seslevel %>% filter(max_part == 1))$n_day_sessions) /
+   nrow(d_seslevel %>% filter(max_part == 1))) *100
+
+print("multiple")
+(table( (d_seslevel %>% filter(max_part != 1))$n_day_sessions) /
+    nrow(d_seslevel %>% filter(max_part != 1))) *100
+```
+
+
+```{r}
+div1$is_in0 <- div1$bigmatch %in% div0$bigmatch
+div0$is_in1 <- div0$bigmatch %in% div1$bigmatch
+div1$is_in0ip <- div1$bigmatch_ip %in% div0$bigmatch_ip
+div0$is_in1ip <- div0$bigmatch_ip %in% div1$bigmatch_ip
+```
+
+```{r}
+sum(div1$is_in0) / nrow(div1) * 100
+sum(div0$is_in1) / nrow(div0) * 100
+```
+
+```{r}
+sum(div1$is_in0ip) / nrow(div1) * 100
+sum(div0$is_in1ip) / nrow(div0) * 100
+```
+
+
+```{r}
+ggplot(d_seslevel %>%
+         filter(is_single != 1)) +
+  geom_density(aes(x = min_ts_time),
+               color = "red") +
+  geom_density(aes(x = max_ts_time),
+               color = "blue") +
+  geom_density(data = d_seslevel %>%
+         filter(is_single == 1),
+         aes(x = min_ts_time),
+         color = "black") +
+  my_theme
+```
+
+
+
+
+Time of day distribution for 1-action-sessions tend to happen later. 
+
+
+```{r}
+ggplot(d_seslevel %>% filter(is_single == 1)) +
+  geom_density(aes(x = min_ts_time)) +
+  facet_wrap(s)
+```
+
+
+
+```{r}
+#a <- d_seslevel %>% arrange(bigmatch_ip, max_ts_time)
+#
+#b <- d_seslevel %>% group_by(bigmatch_ip) %>%
+#  summarise(n = n(),
+ #           has_singels = ifelse(sum(is_single) > 0, 1, 0))
+
+
+```
+
+```{r}
+ggplot(d_seslevel %>% group_by(bigmatch_ip) %>%
+  summarise(n = n(),
+            has_singels = ifelse(sum(is_single) > 0, 1, 0))) + 
+  geom_density(aes(x = n)) +
+  facet_wrap(~has_singels) +
+  #coord_cartesian(xlim = c(0,inf)) +
+  my_theme
+```
+

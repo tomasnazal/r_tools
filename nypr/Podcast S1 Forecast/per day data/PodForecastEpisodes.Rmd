@@ -1,0 +1,601 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+#load Packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+library(lubridate)
+library(plotly)
+library(zoo)
+library(purrr)
+library(gtools)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+
+```
+
+
+```{r}
+#Functions
+
+##0-1 normalization 
+normalize_scalar1 <- function(x, na.rm = T)
+                        {x / sqrt(sum(x^2, na.rm = na.rm))}
+
+#not in
+'%!in%' <- function(x,y) !('%in%'(x,y))
+
+```
+
+```{r}
+#working group 
+working_group <- read.csv("working_group.csv")
+```
+
+```{r}
+for(i in unique(valid_shows$show)){
+  print(paste(i, "->", i %in% unique(d_eps$show)))}
+```
+
+
+```{r}
+#read data
+d <- read.csv("ondemand_clean.csv") %>% 
+  mutate(month_date = as.Date(paste("01-", month, sep = ""), format = "%d-%b-%Y")) 
+
+valid_shows <- read.csv("valid_shows.csv")
+valid_shows$show <- ifelse(valid_shows$show == "Radiolab Presents: More Perfect",
+                           "More Perfect", as.character(valid_shows$show))
+
+
+#format 
+d[, grep("date", colnames(d))] <- lapply(d[, grep("date", colnames(d))],
+                                        function(x) as.Date(x, format = "%Y-%m-%d"))
+
+##by episode, published to podcast
+d_eps <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, story) %>%
+  summarise(story_start_date = story_start_date[1],
+            downloads = sum(downloads),
+            start_month = format(story_start_date, "%b-%Y"),
+            start_year = year(story_start_date),
+            start_week = week(story_start_date)) %>%
+  
+  arrange(show, story_start_date) %>% 
+  mutate(start_weekday = weekdays(story_start_date))
+
+#by episode, only first 30 days
+d_eps_fit <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, story) %>%
+    filter(date <= story_start_date + 30) %>% 
+  summarise(story_start_date = story_start_date[1],
+            downloads = sum(downloads),
+            start_month = format(story_start_date, "%b-%Y"),
+            start_year = year(story_start_date),
+            start_week = week(story_start_date)) %>%
+  arrange(show, story_start_date) %>% 
+  mutate(start_weekday = weekdays(story_start_date))
+
+##by month, published to podcast
+d_month <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, month) %>%
+  summarise(downloads = sum(downloads),
+            n_eps_month = length(which(d_eps$start_month == month[1] & 
+                                         d_eps$show == show[1]))) %>% 
+  mutate(month_date = as.Date(paste("01-", month, sep = ""), format = "%d-%b-%Y")) %>% 
+  arrange(show, month_date)
+
+##by week, published to podcast
+d_week <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, week_date) %>%
+  summarise(downloads = sum(downloads),
+            week_episodes = sum(published_that_day)) %>%
+  arrange(show, week_date)
+
+#sample
+d_sample <- sample_n(d, 8000)
+```
+
+```{r}
+#working selection (published to podcast, available data window)
+dw <- d %>% filter(published_to_podcast == 1,
+                   show_start_date >= as.Date("2016-03-01"),
+                   story_start_date >= as.Date("2016-03-01"))
+
+##by episode
+dw_eps <- dw %>% group_by(show, story) %>%
+  summarise(story_start_date = story_start_date[1],
+            downloads = sum(downloads),
+            start_month = format(story_start_date, "%b-%Y")) %>% 
+  arrange(show, story_start_date) %>% 
+  ungroup() %>% 
+  group_by(show) %>% 
+  mutate(ep_num = row_number())
+
+#for ad -hoc analysis
+dw_firstday <- dw %>%
+  left_join(dw_eps %>%
+              select(show, story, ep_num)) %>%
+  filter(ep_num %in% c(1,2, 3)) %>% 
+  group_by(show, ep_num) %>%
+  arrange(date) %>% slice(1:5)
+
+dw_firstday <- dw_firstday %>%
+  filter(ep_num == 2) %>%
+  group_by(show) %>%
+  slice(1:3) %>%
+  filter(downloads > 5)
+
+dw_firstday <- dw_firstday %>%
+  filter(show %!in% c("He Sang/She Sang",
+                      "Helga",
+                      "The New Yorker Comment",
+                      "Midday on WNYC",
+                      "Sunday Calling")) %>% 
+  group_by(show) %>% 
+  slice(1)
+
+a <- dw_firstday %>% select(show, downloads)
+
+###Add av downloads per peisode
+dw_eps <- dw_eps %>% left_join(d %>% group_by(show) %>% 
+  summarise(avg_downloads_ep = mean(downloads)))
+
+
+##by month
+dw_month <- dw %>% group_by(show, month) %>%
+  summarise(n_eps_month = length(which(dw_eps$start_month == month[1] & 
+                                         dw_eps$show == show[1])),
+            downloads = sum(downloads)) %>% 
+  mutate(month_date = as.Date(paste("01-", month, sep = ""), format = "%d-%b-%Y")) %>% 
+  arrange(show, month_date)
+
+
+###Add avg eps a month and avg monthly downloads
+dw_month <- dw_month %>%
+  left_join(dw_month %>%
+              filter(n_eps_month !=0) %>% 
+              group_by(show) %>%
+              summarise(avg_eps_month = mean(n_eps_month))) %>% 
+  left_join(dw_month %>% group_by(show) %>% 
+              summarise(avg_dwnlds_month = round(mean(downloads), 3)))
+
+##by week, published to podcast
+dw_week <- dw  %>% 
+  group_by(show, week_date) %>%
+  summarise(downloads = sum(downloads),
+            week_episodes = sum(published_that_day)) %>%
+  arrange(show, week_date)
+
+#aggregated at the show level for first week n episodes analysis
+dw_week <- dw_week %>% left_join(dw_week %>%
+                                   select(show, week_date, week_episodes) %>% 
+                                   group_by(show) %>%
+                                   filter(week_episodes !=0) %>% 
+                                   filter(week_date == min(week_date)) %>% 
+                                   mutate(first_pub_week = 1))
+dw_week$first_pub_week <- ifelse(is.na(dw_week$first_pub_week), 0, 1)
+
+dw_wk_agg <- dw_week %>% 
+  group_by(show) %>% 
+  summarise(avg_wk_downloads = mean(downloads)) %>% 
+  left_join(dw_week %>%
+              select(show, first_pub_week, week_episodes) %>% 
+              filter(first_pub_week == 1) %>% 
+              select(-first_pub_week))
+```
+
+```{r}
+#Current Forecasting Method Function
+naive_forecast <- function(proxy, episodes, frequency){
+  dat <- data_frame()
+  for(i in 1:episodes){
+    dat[i, ]
+  }
+  return(dat)
+}
+```
+
+```{r}
+#forecast monthly with averages
+
+##monthly aggregates for forecasting 
+dw_monthly <- dw_month %>% group_by(show) %>% 
+  summarise(avg_dwnlds_month = avg_dwnlds_month[1])
+d_monthly <- d_month %>% group_by(show) %>% 
+  summarise(avg_dwnlds_month = round(mean(downloads), 3))
+
+##3 averages 
+show_permutations <- as.data.frame(permutations(n = length(d_monthly$show), r = 3, v = as.character(d_monthly$show)))
+colnames(show_permutations)[1] <- "show"
+show_permutations <- show_permutations %>% left_join(d_monthly, by = c("V1" = "show"))
+show_permutations <- show_permutations %>% left_join(d_monthly, by = c("V2" = "show"))
+show_permutations <- show_permutations %>% left_join(d_monthly, by = c("V3" = "show"))
+
+show_permutations$avg <-  rowMeans(show_permutations[,4:6])
+show_permutations$avg <- as.numeric(show_permutations$avg)
+
+
+dw_monthly$mean_all <- NA
+for(i in 1:nrow(dw_monthly)){
+  dw_monthly$mean_all[i] <- mean(d_monthly [-(grep(as.character(dw_monthly$show[i]),
+                                                   d_monthly$show) ),  ]$avg_dwnlds_month) 
+}
+
+dw_monthly$best_mean <- NA
+dw_monthly$shows <- NA
+
+for(i in 1:nrow(dw_monthly)){
+  temp2 <- show_permutations %>% filter(V1 != i |
+                                          V2 != i |
+                                          V3 != i)
+  temp2$dif <- abs(dw_monthly$avg_dwnlds_month[i] - temp2$avg)
+  
+  
+  index_min <- which.min(temp2$dif)
+  dw_monthly$best_mean[i] <- round(temp2$avg[index_min], 3)
+  dw_monthly$shows[i] <- paste(temp2$V1[index_min],
+                           temp2$V2[index_min],
+                           temp2$V3[index_min],
+                           sep = "; ")
+}
+
+dw_monthly <- dw_monthly %>% 
+  mutate(dif_mean_all = abs(mean_all - avg_dwnlds_month),
+         dif_best_mean = abs(best_mean - avg_dwnlds_month))
+
+```
+
+```{r}
+#error/size plot for best mean 
+ggplot(dw_monthly,
+       aes(x = avg_dwnlds_month,
+           y = dif_best_mean)) +
+  labs(title = "Mean Methodology Review",
+       x = "Monthly Downloads",
+       y = "Error") +
+  geom_jitter()+
+  stat_smooth(method = "lm") +
+  
+  my_theme
+
+
+```
+
+```{r, fig.width= 12, fig.height= 5}
+ggplot(temp_dw) +
+          labs(title = "Full Data Shows Time Series. Downloads") +
+    geom_line(aes(x = month, y = downloads),
+              color = "blue") +
+  facet_wrap(~show,
+             nrow = 3,
+             ncol = 6,
+             scales = "free") +
+    my_theme +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank())
+```
+
+
+```{r, fig.width= 12, fig.height= 5}
+a <- dw_month %>%  
+         mutate(month = paste("01-", month, sep = ""),
+                month = as.Date(month, "%d-%b-%Y"))
+
+ggplot(a) +
+  labs(title = "Full Data Shows Time Series. Episodes.") +
+  geom_line(aes(x = month, y = n_eps_month, group = "none"),
+            color = "red") +
+  facet_wrap(~show,
+             nrow = 3,
+             ncol = 6,
+             scales = "free") +
+  my_theme +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank())
+```
+
+```{r, fig.width= 12, fig.height= 5}
+a2 <- a %>% group_by(show) %>% 
+  mutate(downloads = scalar1(downloads),
+         n_eps_month = scalar1(n_eps_month))
+
+ggplot(a2) +
+  labs(title = "Full Data Shows Time Series") +
+  geom_line(aes(x = month, y = downloads, group = "none"),
+            color = "blue") +
+  geom_line(aes(x = month, y = n_eps_month, group = "none"),
+            color = "red") +
+  facet_wrap(~show,
+             nrow = 3,
+             ncol = 6,
+             scales = "free") +
+  my_theme +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank())
+```
+
+
+#Natural Attrition 
+
+```{r}
+d_show_ep_month <- d %>% 
+  filter(published_to_podcast == 1,
+         story_start_date >= as.Date("2016-03-01")) %>% 
+  filter(show %in% working_group$show
+         ,story_start_date >= min(date)
+         ) %>% 
+  group_by(show, story, month_date) %>% 
+  summarise(downloads = sum(downloads)) %>%
+  arrange(month_date) %>% 
+  ungroup() %>% 
+  group_by(show, story) %>% 
+  mutate(month_n = row_number(),
+         dwld_perc = round((downloads / sum(downloads)) * 100, 2))
+```
+
+```{r}
+d_eps$is_bonus <- ifelse(grepl("bonus|Bonus", d_eps$story), 1, 0)
+```
+
+```{r}
+summary(lm(dwld_perc~as.factor(month_n), data = d_show_ep_month))
+```
+
+```{r}
+summary(lm(downloads ~ is_bonus + show, data = d_eps))
+```
+
+```{r}
+ggplot(d_show_ep_month) +
+  geom_line(aes(x = ))
+```
+
+
+```{r}
+temp3 <- d_show_ep_month %>% #filter(show %in% d_k$show) %>% 
+#   filter(show %in% c("2 Dope Queens",
+# "A Piece of Work",
+# "Aftereffect",
+# "American Fiasco",
+# "Caught",
+# "Death, Sex & Money",
+# "Freakonomics Radio",
+# "Here's The Thing",
+# "Late Night Whenever",
+# "More Perfect",
+# "Nancy",
+# "Note to Self",
+# "On The Media",
+# "Only Human",
+# "Pickle",
+# "Radiolab",
+# "Science Friday",
+# "Snap Judgment",
+# "Snap Judgment Presents: Spooked",
+# "Sooo Many White Guys",
+# "Stay Tuned with Preet",
+# "The New Yorker Radio Hour",
+# "The Orbiting Human Circus",
+# "The Realness",
+# "The Takeaway",
+# "The United States of Anxiety",
+# "There Goes the Neighborhood",
+# "This Podcast Has Fleas",
+# "Trump, Inc.",
+# "Undiscovered",
+# "Werk It: The Podcast")) %>% 
+  group_by(month_n) %>% 
+  summarise(avg_perc = mean(dwld_perc))
+
+ggplot(temp3) +
+  labs(title = "Natural Episode Attrition",
+       x = "Month Number",
+       y = "Percentage of Downloads") +
+  geom_point(aes(x = month_n,
+                y = avg_perc)) +
+  geom_line(aes(x = month_n,
+                y = avg_perc)) +
+  geom_text(aes(x = month_n,
+                y = avg_perc,
+                label = paste(round(avg_perc, 1), "%", sep = "")),
+            nudge_x = 0.5,
+            nudge_y = 1.7,
+            size = 2.4)+
+  my_theme
+```
+
+
+```{r}
+#exploratory
+
+##plot downloads per day for each show
+for(i in unique((d %>% filter(published_to_podcast == 1))$show)){
+  print(ggplot(d %>% filter(published_to_podcast == 1,
+                      show == i)) +
+          labs(title = i) +
+    geom_line(aes(x = date, y = downloads)) + 
+    my_theme)
+}
+
+##plot downloads by month for each show 
+temp <- d %>% filter(published_to_podcast == 1) %>% 
+                 group_by(show, month) %>% 
+                 summarise(downloads = sum(downloads))
+temp$month <- paste("01-", temp$month, sep = "")
+temp$month <- as.Date(as.character(temp$month), format = "%d-%b-%Y")
+
+for(i in unique(temp$show)){
+  print(ggplot(temp %>% filter(show == i)) +
+          labs(title = i) +
+    geom_line(aes(x = month, y = downloads)) + 
+    my_theme)
+}
+
+## DW plot downloads by month for each show 
+temp_dw <- dw %>% filter(published_to_podcast == 1) %>% 
+                 group_by(show, month) %>% 
+                 summarise(downloads = sum(downloads))
+temp_dw$month <- paste("01-", temp_dw$month, sep = "")
+temp_dw$month <- as.Date(as.character(temp_dw$month), format = "%d-%b-%Y")
+
+for(i in unique(temp_dw$show)){
+  print(ggplot(temp_dw %>% filter(show == i)) +
+          labs(title = i) +
+    geom_line(aes(x = month, y = downloads)) + 
+    my_theme)
+}
+
+```
+
+```{r}
+#relation btw  episodes a month and downloads
+ggplotly(ggplot(d_month %>% filter(between(n_eps_month, 1, 15),
+                                   show %!in% c(#"Radiolab", "Freakonomics Radio",
+                                       "The Takeaway", "Midday on WNYC",
+                                       "The Leonard Lopate Show",
+                                        "The Brian Lehrer Show"))) +
+  geom_point(aes(x = n_eps_month,
+                 y = downloads,
+                 color = show)) +
+  stat_smooth(aes(x = n_eps_month,
+                 y = downloads),
+              method = "lm") +
+  my_theme + 
+    theme(legend.position = "none"))
+
+```
+
+
+```{r}
+#get average dl's per episode
+d %>% filter(show == "Only Human",
+             story_start_date >= (Sys.Date() - 365),
+             story_start_date <= (Sys.Date() - 28)) %>%
+  group_by(story) %>% 
+  summarise(avg_downloads = sum(downloads)) %>% 
+  ungroup() %>% 
+  summarise(avg_ep = mean(avg_downloads))
+```
+
+
+```{r}
+a$downloads <- as.numeric(a$downloads)
+a <- a %>%
+  ungroup() %>% 
+  arrange(downloads) %>% 
+  mutate(show = factor(show, levels = show),
+         is_trump = ifelse(show == "Trump, Inc.", 1, 0))
+
+ggplot(a %>% filter(show != "Nancy")) +
+  labs(title = "Available Data for Shows on First Day") +
+  geom_bar(aes(x = show,
+               y = downloads,
+               fill = as.factor(is_trump)),
+           stat = "identity") +
+  geom_text(aes(x = show,
+                y = downloads,
+            label = scales::comma(downloads)),
+            vjust = -0.5,
+            size = 3) +
+  geom_label(aes(x = "Snap Judgment Presents: Spooked",
+                 y = 15000,
+            label = "mean = 6,441 \nmedian = 5,825"),
+            hjust = 0,
+            size = 3,
+            label.padding = unit(0.5, "lines")) +
+  scale_fill_manual(values = c("blue", "red")) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 18)) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none",
+        axis.title.x = element_blank())
+```
+
+```{r}
+ggplotly(ggplot(d_month %>%
+                  ungroup() %>% 
+                  mutate(show = str_extract(show, "^.{0,10}"))) +
+  geom_line(aes(x = month_date,
+                y = downloads,
+                color = show)) +
+  my_theme +
+    theme(legend.position = "left")) 
+
+
+
+```
+
+```{r}
+ggplot(d_month %>% filter(show %!in% c("Freakonomics Radio",
+                                       "Radiolab"),
+       downloads > 500)) +
+  geom_density(aes(x = downloads)) +
+  my_theme
+```
+
+
+#Ashley's Questions
+```{r}
+#ad hoc variables
+d_eps_fit$start_weekday <- relevel(as.factor(d_eps_fit$start_weekday), "Monday")
+d_eps_fit$release_groups <- ifelse(d_eps_fit$start_weekday %in% c("Monday", "Tuesday", "Wednesday"), "mon-wed",
+                               ifelse(d_eps_fit$start_weekday %in% c("Thursday", "Friday"), "thu-fri", "sat-sun"))
+d_eps_fit$release_groups <- relevel(as.factor(d_eps_fit$release_groups), "mon-wed")
+d_eps_fit$release_month <- as.factor(month(d_eps_fit$story_start_date))
+d_eps_fit$start_year <- as.factor(d_eps_fit$start_year)
+
+fit_data <- d_eps_fit %>% filter(show %in% valid_shows[valid_shows$station == "wnyc",]$show)
+fit_data_wk <- dw_wk_agg %>% filter(show %in% valid_shows[valid_shows$station == "wnyc",]$show)
+```
+
+
+##All cases
+```{r}
+#Monday reference
+summary(lm(downloads~start_weekday + as.factor(start_year) + release_month + show, data = fit_data))
+```
+
+
+```{r}
+#group reference
+summary(lm(downloads~release_groups + as.factor(start_year) + release_month+ show, data = fit_data))
+```
+
+##number of episodes in the first week
+```{r}
+ggplot(dw_wk_agg %>%
+         filter(!is.na(week_episodes)) %>% 
+         arrange(desc(week_episodes),
+                             desc(avg_wk_downloads)) %>% 
+         mutate(show = str_sub(show, 1, 9),
+                show = factor(show, levels = show))) +
+  labs(title = "Show Average Weekly Downloads by Number of First Week Episodes",
+       fill = "First Week Episodes") +
+  geom_bar(aes(x = show,
+               y = avg_wk_downloads,
+               fill = as.factor(week_episodes)),
+           stat = "identity") +
+  my_theme +
+  theme(legend.position = c(0.85,0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+#ggsave("show averages by release weeks.jpeg", device = "jpeg", width = 7, height = 5)  
+```
+
+```{r}
+summary(lm(avg_wk_downloads~week_episodes, data = dw_wk_agg))
+```
+
+

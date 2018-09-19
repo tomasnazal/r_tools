@@ -1,0 +1,157 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+#load Packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+library(lubridate)
+library(zoo)
+library(purrr)
+library(gtools)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+
+```
+
+```{r}
+viz <- read.csv("fy18marjan.csv")
+goals <- read.csv("FY18goals.csv")
+
+viz <- viz %>% left_join(goals)
+
+viz$date <- paste(viz$date, "-01", sep = "")
+viz$date <- as.Date(viz$date, format = "%Y-%m-%d")
+viz$FY18goal <- gsub(",", "", viz$FY18goal)
+viz$FY18goal <- as.numeric(viz$FY18goal)
+
+viz <-  spread(viz, date, downloads)
+colnames(viz)[2] <- "2018-07-01"
+viz <- gather(viz, date, downloads, 2:ncol(viz))
+viz$date <- as.Date(viz$date, format = "%Y-%m-%d")
+viz <- viz %>% group_by(show) %>% arrange(show, date)
+viz$proj_flag <- ifelse(viz$date == as.Date("2018-07-01"), 1, 0)
+viz$is_high <- factor(ifelse(viz$show %in% c("Radiolab", "Freakonomics Radio"),
+                             "Radiolab - Freakonomic", "Other"),
+                      levels = c("Radiolab - Freakonomic", "Other"))
+
+vizra <- viz
+vizra <- vizra %>% left_join(vizra %>%
+                               filter(date != as.Date("2018-07-01")) %>% 
+                               group_by(show) %>% 
+                               mutate(ra = cumsum(downloads) / row_number()))
+
+vizra$ra <- ifelse(is.na(vizra$ra), vizra$downloads, vizra$ra)
+```
+
+```{r, fig.height=10, fig.width=10}
+ggplot(data = vizra %>% filter(proj_flag !=1),   
+            aes(x = date,
+                y = ra)) +
+  labs(title = "WNYC Studios Shows. Progress Through Jan 2018 and FY18 Goal Comparison",
+       y = "Monthly Rolling Average") +
+  geom_point(aes(color = show),
+             size = 1) +
+  geom_point(data = vizra %>%
+               filter(proj_flag == 1),   
+            aes(x = date,
+                y = ra,
+            color = show),
+            size = 1) +
+  geom_line(aes(group = show,
+                color = show)) +
+  stat_smooth(data = vizra %>%
+                filter(date == as.Date("2018-07-01") |
+                         date == as.Date("2018-01-01")),
+              aes(x = date,
+                  y = ra,
+                  group = show,
+                  color = show),
+              method = "lm",
+              linetype = "dashed",
+              size = 0.7
+              ) +
+  geom_text_repel(data = vizra %>% filter(proj_flag == 1),   
+            aes(x = date,
+                y = ra,
+                label = show,
+                color = show),
+            nudge_x = 45,
+            size = 3) +
+  geom_vline(xintercept = as.Date("2018-01-01"),
+             linetype = "dotted",
+             color = "gray") +
+  facet_wrap(~is_high, nrow = 2, scales = "free")+
+  coord_cartesian(xlim = c(as.Date("2017-03-01"),
+                           as.Date("2018-09-01"))) +
+  scale_y_continuous(labels = scales::comma) +
+  my_theme +
+  theme(legend.position = "none")
+
+ggsave("plot_ra_jan.jpeg", device = "jpeg", width = 10, height = 10, dpi = 400)
+```
+
+
+
+```{r, fig.height=10, fig.width=10}
+ggplot(data = viz %>% filter(proj_flag !=1),   
+            aes(x = date,
+                y = downloads)) +
+  geom_point(aes(color = show),
+             size = 1) +
+  geom_point(data = viz %>% filter(proj_flag == 1),   
+            aes(x = date,
+                y = downloads,
+            color = show),
+            size = 1) +
+  geom_line(aes(group = show,
+                color = show)) +
+  stat_smooth(data = viz %>%
+                filter(date == as.Date("2018-07-01") |
+                         date == as.Date("2017-12-01")),
+              aes(x = date,
+                  y = downloads,
+                  group = show,
+                  color = show),
+              method = "lm",
+              linetype = "dashed") +
+  geom_text_repel(data = viz %>% filter(proj_flag == 1),   
+            aes(x = date,
+                y = downloads,
+                label = show,
+                color = show),
+            #position = position_dodge(width = 10),
+            nudge_x = 45,
+            #hjust = 0,
+            size = 3
+            ) +
+  geom_vline(xintercept = as.Date("2017-12-01"),
+             linetype = "dotted",
+             color = "gray") +
+  facet_wrap(~is_high, nrow = 2, scales = "free")+
+  coord_cartesian(xlim = c(as.Date("2017-03-01"),
+                           as.Date("2018-09-01"))) +
+  my_theme +
+  theme(legend.position = "none")
+
+ggsave("plot_actuals.jpeg", device = "jpeg", width = 10, height = 10, dpi = 400)
+```
+
+
+
+
+
+
+
+

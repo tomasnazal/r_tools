@@ -1,0 +1,25 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+```
+
+
+```{r}
+d <- read.csv("/Users/tnazal/Downloads/tnyrh_sources.csv")
+colnames(d) <- c("client", "referrer", "downloads")
+```
+
+```{r}
+d %>% group_by(client) %>% count() %>% arrange(desc(n))
+a <- d %>% group_by(client, referrer) %>% summarise(n = sum(downloads)) %>% arrange(desc(n))
+a$client <- ifelse(a$client == "Unknown" &
+                     a$referrer %in% c("wnyc.org",
+                                       "wnycstudios.org"),
+                   "wnyc_platform", as.character(a$client))
+a <- a %>% group_by(client) %>% summarise(n = sum(n)) %>% arrange(desc(n))
+```
+

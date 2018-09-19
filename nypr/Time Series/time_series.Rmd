@@ -1,0 +1,193 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+#load Packages
+library(ggplot2)
+library(stringr)
+library(lubridate)
+library(zoo)
+library(purrr)
+library(gtools)
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(mytools)
+```
+
+```{r}
+#Read Data
+d <- fread("~/Documents/Podcast S1 Forecast/per day data/ondemand_clean.csv") %>% 
+  mutate(month_date = as.Date(paste("01-", month, sep = ""), format = "%d-%b-%Y")) %>%
+  filter(story_start_date >= as.Date("2016-03-01"))
+show_data <- read.csv("~/Documents/Podcast S1 Forecast/per day data/show_data.csv")
+show_data$show <- ifelse(show_data$show == "Radiolab Presents: More Perfect",
+                           "More Perfect", as.character(show_data$show))
+
+#Process
+d[, grep("date", colnames(d))] <- lapply(d[, grep("date", colnames(d))],
+                                        function(x) as.Date(x, format = "%Y-%m-%d"))
+d <- d %>% filter(show_start_date >= "2016-03-01",
+                  show %in% show_data$show)
+```
+
+#Eliminate feedwarmers, create real story start date 
+```{r}
+#dataframe w/the day of release of the first episode
+a <- d %>% group_by(show) %>%
+  filter(story_start_date == min(story_start_date)) %>% 
+  summarise(ep = story[1])
+#dataframe w not the first story (feed warmer), start date of that one
+d <- d %>% filter(story %!in% a[a$show != "The New Yorker Comment",]$ep) %>%
+  group_by(show, story) %>% 
+  mutate(story_start_date1 = min(date))
+
+
+temp <- d %>% group_by(show, story) %>%
+  summarise(n_sdates = n_distinct(story_start_date),
+            story_start_date = min(story_start_date),
+            story_start_date1 = min(story_start_date1),
+            timediff = difftime(story_start_date1, story_start_date),
+            orig_dls = ifelse(length(which(date == min(story_start_date))) == 0, NA,
+                              downloads[which(date == min(story_start_date))]),
+            new_dls = downloads[which(date == story_start_date1[1])][1]) %>%
+  mutate(story_start_date_real =  if_else(is.na(orig_dls) | n_sdates > 1, story_start_date1,
+                                  story_start_date)) %>% 
+  filter(timediff != 0 |
+         n_sdates >)
+d <- d %>%
+  left_join(temp %>% select(show, story, story_start_date_real)) %>% 
+  mutate(story_start_date = as.Date(if_else(!is.na(story_start_date_real),
+                                   story_start_date_real,
+                                   story_start_date))) %>% 
+  select(-story_start_date_real)
+
+d$published_that_day <- ifelse(d$date == d$story_start_date, 1, 0)
+d <- d %>% left_join(d %>%
+                       group_by(show, story) %>%
+                       summarise(n_sdates = n_distinct(story_start_date)) %>% 
+                       filter(n_disti))
+rm(a,b,temp)
+```
+
+#Aggregation Datasets
+```{r}
+d_daylevel <- d %>% select(date, show, downloads, story_start_date, published_that_day) %>%
+  group_by(show,date) %>% 
+  summarise(downloads = sum(downloads),
+            release = sum(published_that_day)) %>% 
+  arrange(show,date) %>%
+  group_by(show) %>%
+  mutate(ma = cumsum(downloads) / row_number(date),
+         cum_dls = cumsum(downloads))
+
+```
+
+
+#By day, by episode, by show
+```{r}
+for(i in unique(d$show)){
+  print(ggplot(d %>% filter(show == i)) +
+          labs(title = i) +
+          geom_line(aes(x = date,
+                        y = downloads)) +
+          my_theme)
+}
+```
+
+#By day, by show, MA
+```{r}
+for(i in unique(d_daylevel$show)){
+  print(ggplot(d_daylevel %>% select(show, date, release, downloads, ma) %>% 
+                 filter(show == i) %>% 
+                 gather(var, val, c(downloads,ma))) +
+          labs(title = i) +
+          geom_vline(xintercept = d_daylevel[d_daylevel$show == i &
+                                             d_daylevel$release != 0,]$date,
+                     linetype = "dashed",
+                     color = "grey") +
+          geom_line(aes(x = date,
+                        y = val,
+                        color = var)) +
+          my_theme)
+}
+```
+
+
+
+#Cummulative Downloads
+```{r}
+for(i in unique(d_daylevel$show)){
+  print(ggplot(d_daylevel %>% 
+                 filter(show == i)) +
+          labs(title = i,
+               color = "episodes") +
+          geom_vline(xintercept = d_daylevel[d_daylevel$show == i &
+                                             d_daylevel$release > 0,]$date,
+                     linetype = "dashed",
+                     color = "grey") +
+          geom_vline(data = d_daylevel[d_daylevel$show == i &
+                                             d_daylevel$release > 0,],
+                    aes(xintercept = date,
+                        color = as.factor(release)),
+                    linetype = "dashed")+
+          geom_line(aes(x = date,
+                        y = cum_dls),
+                    color = "#218cba") +
+          scale_color_manual(values = c("grey", "#10cc2f", "#cc2c10")) +
+          my_theme +
+          theme(legend.position = c(0.13,0.9),
+                legend.title = element_text(size = 8),
+                legend.text = element_text(size = 8),
+                legend.key.size = unit(0.6, "lines"),
+                legend.box.background = element_rect(color = "grey")))
+}
+
+```
+
+
+#First 30 days
+```{r}
+for(i in unique(d_daylevel$show)){
+  print(ggplot(d_daylevel %>% 
+                 filter(show == i,
+                        date < min(date) + 60)) +
+          labs(title = i,
+               color = "episodes") +
+          geom_vline(xintercept = d_daylevel[d_daylevel$show == i &
+                                             d_daylevel$release > 0,]$date,
+                     linetype = "dashed",
+                     color = "grey") +
+          geom_vline(data = d_daylevel[d_daylevel$show == i &
+                                             d_daylevel$release > 0,],
+                    aes(xintercept = date,
+                        color = as.factor(release)),
+                    linetype = "dashed")+
+          geom_line(aes(x = date,
+                        y = cum_dls),
+                    color = "#218cba") +
+          scale_color_manual(values = c("grey", "#10cc2f", "#cc2c10")) +
+          my_theme +
+          theme(legend.position = c(0.13,0.9),
+                legend.title = element_text(size = 8),
+                legend.text = element_text(size = 8),
+                legend.key.size = unit(0.6, "lines"),
+                legend.box.background = element_rect(color = "grey")))
+}
+
+```
+#all togehter
+```{r}
+plotly::ggplotly(ggplot(d_daylevel %>% 
+                 filter(date < min(date) + 120)) +
+          labs(title = "all shows first 30 days",
+               color = "episodes") +
+          geom_line(aes(x = date,
+                        y = cum_dls,
+                    color = show)) +
+          #scale_color_manual(values = c("grey", "#10cc2f", "#cc2c10")) +
+          my_theme +
+          theme(legend.position = "none"))
+```
+

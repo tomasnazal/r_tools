@@ -1,0 +1,158 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+#load Packages
+library(plotly)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(lubridate)
+```
+
+```{r}
+#ad-hoc functions
+delet_narows <- function(data, col){
+  data <- data[!is.na(data[col]),]
+  colnames(data)[col] <- "podcast_id"
+  return(data)
+}
+
+date_colname <- function(data){
+  date_colnames <- str_extract(colnames(data),
+                               "[0-9]{1,}.[0-9]{1,}.[0-9]{1,}")
+  return(date_colnames)
+}
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+
+```
+
+```{r}
+#read data
+auto2015 <- read.csv("apple_autodls_2015.csv")
+auto2016 <- read.csv("apple_autodls_2016.csv")
+auto2017 <- read.csv("apple_autodls_2017.csv")
+manual2015 <- read.csv("apple_mandls_2015.csv")
+manual2016 <- read.csv("apple_mandls_2016.csv")
+manual2017 <- read.csv("apple_mandls_2017.csv")
+streams2015 <- read.csv("apple_streams_2015.csv")
+streams2016 <- read.csv("apple_streams_2016.csv")
+streams2017 <- read.csv("apple_streams_2017.csv")
+subs2015 <- read.csv("apple_subs_2015.csv")
+subs2016 <- read.csv("apple_subs_2016.csv")
+subs2017 <- read.csv("apple_subs_2017.csv")
+```
+
+```{r}
+#clean, merge
+counter <- 0
+df_list <- ls(pattern = "20[0-9].")
+for(i in df_list){
+  temp <- get(i)
+  temp <- delet_narows(temp, 1)
+  colnames(temp)[3:ncol(temp)] <- date_colname(temp[3:ncol(temp)])
+  temp <- gather(temp, week, n, 3:ncol(temp))
+  temp$date_index <- ifelse(nchar(temp$week) > 9,
+                     as.character(as.Date(temp$week, format = "%m.%d.%Y")),
+                     as.character(as.Date(temp$week, format = "%m.%d.%y")))
+  temp$n <-  as.numeric(gsub(",", "", temp$n))
+  colnames(temp)[c(1, 2, 4)] <- c("id", "show", str_extract(paste(i), "[:alpha:]+"))
+  temp$date_index <- as.Date(temp$date_index) 
+  temp$week <- week(temp$date_index)
+  temp$year <- year(temp$date_index)
+  temp$merge_var <- paste(temp$id,
+                          temp$show,
+                          temp$week,
+                          temp$date_index,
+                          temp$year, 
+                          sep = "") 
+  assign(i, temp)
+  counter <- counter + 1
+  if(counter == 1){
+    apple <- temp[-4]
+  }
+  apple <- full_join(apple, temp[-4])
+  rm(temp)
+}
+#empty spaces for replace joint
+apple <- apple %>% mutate(auto = NA,
+                          manual = NA,
+                          streams = NA,
+                          subs = NA)
+#Replace join
+for(j in c("auto", "manual", "streams", "subs")){
+  f_list <- ls(pattern = j)
+  for(i in f_list){
+    temp <- get(i)
+    apple[match(temp$merge_var, apple$merge_var), j]<- temp[,j]
+  }
+}
+
+#cleanup
+rm(counter, df_list, f_list, i, j, temp)
+rm(list = c(ls(pattern = "20[0-9].")))
+apple$merge_var <- NULL
+
+```
+
+```{r}
+#new variables
+apple <- apple %>% dplyr::group_by(show) %>% 
+  arrange(date_index) %>% 
+  mutate(auto_delta = auto - lag(auto),
+         auto_norm = scalar1(auto_delta),
+         subs_norm = scalar1(subs))
+
+```
+
+
+```{r}
+ggplotly(ggplot(apple
+                #%>% filter(show %!in% c("Radiolab", "Freakonomics Radio"))
+                %>% filter(show == "TLDR")
+                ) +
+  geom_line(aes(x = date_index,
+                y = subs_norm,
+                group = show),
+            color = "black") +
+  geom_line(aes(x = date_index,
+                y = auto_norm,
+                color = show)) +
+  geom_hline(yintercept = 0,
+             linetype = "dashed") +
+    stat_smooth(aes(x = date_index,
+                    y = auto_norm)) +
+  my_theme +
+    theme(legend.position = "none"))
+```
+
+```{r}
+summary(lm(subs ~ auto + manual + streams + year + show + date_index, data = apple %>% filter(show %!in% c("Radiolab", "Freakonomics Radio"))))
+```
+
+```{r}
+summary(lm(subs ~ auto, data = apple))
+```
+
+```{r}
+ggplotly(ggplot(apple %>% filter(show %!in% c("Radiolab", "Freakonomics Radio"))) +
+  geom_point(aes(x = auto,
+                 y = subs,
+                 color = show)) +
+  stat_smooth(aes(x = auto,
+                  y = subs),
+              method = "lm") +
+  my_theme +
+  theme(legend.position = "none"))
+```
+

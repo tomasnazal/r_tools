@@ -1,0 +1,93 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(forecast)
+```
+
+```{r}
+d <- read.csv("rl_mp_2yr_monthly.csv")
+d$month <- as.Date(paste0(d$month, "-01"), format = "%Y-%m-%d")
+rl <- d %>% filter(show == "Radiolab") %>%
+  arrange(month) %>%
+  slice(-n())
+mp <- d %>% filter(show == "More Perfect") %>%
+  arrange(month) %>%
+  slice(-n())
+```
+
+```{r}
+#ts
+rl_ts <- ts(rl %>% select(downloads), frequency = 12)
+mp_ts <- ts(mp %>% select(downloads), frequency = 12)
+plot(forecast(auto.arima(rl_ts, D = 1), h=24), main= "Radiolab 12 Month Forecast")
+plot(forecast(auto.arima(mp_ts, D =1), h=24), main= "More Perfect 12 Month Forecast")
+```
+
+```{r}
+rl_forecast <- as.data.frame(forecast(auto.arima(rl_ts, D = 1), h=12))
+mp_forecast <- as.data.frame(forecast(auto.arima(mp_ts, D = 1), h=12))
+```
+
+
+```{r}
+rl_dif <- data.frame(past_year = sum(rl %>% filter(month > "2017-05-01") %>% pull(downloads)),
+                     point_forecast = sum(rl_forecast$`Point Forecast`),
+                     hi_80 = sum(rl_forecast$`Hi 80`),
+                     hi_95 = sum(rl_forecast$`Hi 95`)) %>% 
+  mutate(point_forecast_perc = round((abs(point_forecast - past_year ) / past_year) * 100, 2),
+         hi_80_perc = round((abs(hi_80 - past_year ) / past_year) * 100, 2),
+         hi_95_perc = round((abs(hi_95 - past_year ) / past_year) * 100, 2))
+
+
+mp_dif <- data.frame(past_year = sum(mp %>% filter(month > "2017-05-01") %>% pull(downloads)),
+                     point_forecast = sum(mp_forecast$`Point Forecast`),
+                     hi_80 = sum(mp_forecast$`Hi 80`),
+                     hi_95 = sum(mp_forecast$`Hi 95`)) %>% 
+  mutate(point_forecast_perc = round((abs(point_forecast - past_year ) / past_year) * 100, 2),
+         hi_80_perc = round((abs(hi_80 - past_year ) / past_year) * 100, 2),
+         hi_95_perc = round((abs(hi_95 - past_year ) / past_year) * 100, 2))
+```
+
+```{r}
+mp_comp <- data.frame(past_year = mp %>% filter(month > "2017-05-01") %>% pull(downloads),
+                     point_forecast = mp_forecast$`Point Forecast`,
+                     hi_80 = mp_forecast$`Hi 80`,
+                     hi_95 = mp_forecast$`Hi 95`)
+
+rl_comp <- data.frame(past_year = rl %>% filter(month > "2017-05-01") %>% pull(downloads),
+                     point_forecast = rl_forecast$`Point Forecast`,
+                     hi_80 = rl_forecast$`Hi 80`,
+                     hi_95 = rl_forecast$`Hi 95`)
+```
+
+
+```{r}
+ggplot(mp_comp %>% mutate(row = row_number()) %>% gather(var, val, 1:4)) +
+  labs(title = "More Perfect Possible Scenarios",
+       color = "Scenario",
+       x = "month",
+       y = "downloads") +
+  geom_line(aes(x = row,
+                y = val,
+                color = var)) +
+  my_theme
+```
+
+```{r}
+ggplot(rl_comp %>% mutate(row = row_number()) %>% gather(var, val, 1:4)) +
+  labs(title = "Radiolab Possible Scenarios",
+       color = "Scenario",
+       x = "month",
+       y = "downloads") +
+  geom_line(aes(x = row,
+                y = val,
+                color = var)) +
+  my_theme
+```
+
+

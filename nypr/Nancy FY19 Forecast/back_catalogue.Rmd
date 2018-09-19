@@ -1,0 +1,54 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+back <- read.csv("nancy_eps_date.csv")
+
+colnames(back) <- c("date", "story", "publish_date", "downloads")
+back$date <- as.Date(back$date)
+back$publish_date <- as.Date(back$publish_date)
+back <- arrange(back, date)
+
+
+back$day_downloads <- ifelse(back$date >= back$publish_date -2 &
+                               back$date <= back$publish_date + 7,
+                             1, 0) 
+
+a <- back %>% group_by(date, day_downloads) %>% summarise(downloads = sum(downloads))
+
+ggplot(a) +
+  geom_line(aes(x = date,
+                y = downloads,
+                color = as.factor(day_downloads)))
+```
+
+
+```{r}
+bac <- spread(a,day_downloads, downloads)
+bac$`0` <- ifelse(is.na(bac$`0`),1, bac$`0`)
+bac$`1` <- ifelse(is.na(bac$`1`),1, bac$`1`)
+colnames(bac) <- c("date", "back","current")
+bac$prop <- bac$back / (bac$current + bac$back)
+
+bac2 <- bac %>% left_join(d %>% select(date, in_season))
+
+ggplot(bac2 %>%
+         filter(in_season == 1)%>% 
+         group_by(year(date),
+                  week(date)) %>%
+         summarise(date = min(date),
+                   prop = mean(prop)),
+       aes(x = date,
+                y = prop)) +
+  labs(title = "Nancy. Weekly Proportion of Back-Catalog Listening.") +
+  geom_bar(stat = "identity",width = 6) +
+  stat_smooth(se = F) +
+  scale_y_continuous(labels = scales::percent)+
+  my_theme +
+  theme(panel.grid.major.y = element_line(color = "grey"),
+        panel.grid.minor.y = element_line(color = "grey",
+                                          linetype = "dashed"))
+```
+

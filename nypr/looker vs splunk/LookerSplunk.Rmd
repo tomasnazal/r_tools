@@ -1,0 +1,258 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(data.table)
+library(stringdist)
+library(stringr)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+```
+
+```{r}
+#Functions
+#not in
+'%!in%' <- function(x,y) !('%in%'(x,y))
+```
+
+#Read data
+```{r}
+looker <- fread("looker_both.csv")
+colnames(looker) <- c("show", "month", "downloads", "listeners")
+spl_lis <- fread("splunk_listeners.csv")
+spl_lis <- gather(spl_lis, "show", "listeners", 2:ncol(spl_lis))
+spl_lis$listeners <- as.numeric(spl_lis$listeners)
+spl_lis <- spl_lis %>% filter(month != "", !str_detect(show, "V[:digit:]+"))
+spl_dls <- fread("splunk_listens.csv")
+spl_dls <- gather(spl_dls, "show", "downloads", 2:ncol(spl_dls))
+spl_dls$downloads <- as.numeric(spl_dls$downloads)
+spl_dls <- spl_dls %>% filter(month != "", !str_detect(show, "V[:digit:]+"))
+
+splunk <- spl_dls %>% left_join(spl_lis)
+
+looker$show <- tolower(looker$show)
+splunk$show <- tolower(splunk$show)
+```
+
+```{r}
+#they don't match. make match table
+lookup <- data.frame(splunk_shows = unique(splunk$show)[c(unique(splunk$show) %!in% unique(looker$show))])
+for(i in 1:nrow(lookup)){
+  lookup$tomatch[i] <-  unique(as.character(looker$show))[amatch(lookup$splunk_shows[i],
+                                                                  unique(looker$show),
+                                                                  maxDist = 6)]
+}
+#In this case used as an euristic for no rule leaves out the right ammount 
+looker <- looker %>% 
+  mutate(show = ifelse(show == "sideshows", "sideshow",
+                ifelse(show == "freakonomics radio", "freakonomics",
+                ifelse(show == "death, sex & money", "death, sex, money",
+                ifelse(show == "the sporkful", "sporkful",
+                ifelse(show == "the longest shortest time", "longest shortest time",
+                ifelse(show == "the new yorker: politics and more", "new yorker: politics and more",
+                ifelse(show == "the new yorker: poetry", "new yorker poetry",
+                ifelse(show == "the new yorker: fiction", "new yorker fiction",
+                ifelse(show == "the writer's voice: new fiction from the new yorker", "new yorker author's voice",
+                ifelse(show == "tribeca film festival live", "tribeca film festival",
+                ifelse(show == "the christie tracker", "christie tracker",
+                ifelse(show == "the united states of anxiety", "united states of anxiety",
+                ifelse(show == "snap judgment presents: spooked", "spooked",
+                ifelse(show == "the new yorker comment", "the new yorker: comment",
+                ifelse(show == "trump, inc.", "trump inc",
+                ifelse(show == "the new canon", "new canon",
+                ifelse(show == "the washington report", "washington report",
+                ifelse(show == "my daily bach", "daily bach", show)))))))))))))))))))
+
+
+
+```
+
+```{r}
+#standarize month
+splunk$month <- as.Date(paste("01-",
+                              ifelse(as.numeric(str_extract(splunk$month, "[^./]+")) < 10,
+                                     paste("0", str_extract(splunk$month, "[^./]+"), sep = ""),
+                                     paste(str_extract(splunk$month, "[^./]+"))),
+                              gsub(".*/", "-20", splunk$month),
+                              sep = ""),
+                        format = "%d-%m-%Y")
+
+looker$month <- as.Date(paste(looker$month, "-01", sep = ""),
+                        format = "%Y-%m-%d")
+colnames(looker) <- c("show", "month", "downloads_looker", "listeners_looker")
+#do a joint                                                   
+compare <- inner_join(looker, splunk)
+```
+
+```{r}
+#compute mse
+a <- compare %>% filter(complete.cases(compare))
+
+mean((compare$downloads - compare$downloads_looker)^2, na.rm = T)
+Metrics::mse(a$downloads, a$downloads_looker)
+Metrics::mape(a$downloads, a$downloads_looker)
+```
+
+```{r}
+compare_sum <- compare %>%
+  filter(complete.cases(compare)
+         ,show != "freakonomics"
+         
+         ,show != "2 dope queens") %>% 
+  select(-show) %>% 
+  group_by(month) %>% 
+  summarise_all(funs(sum))
+compare_avg <- compare %>%
+  filter(complete.cases(compare)) %>% 
+  select(-show) %>% 
+  group_by(month) %>% 
+  summarise_all(funs(mean))
+
+compare_sum$err_downloads <- (abs(compare_sum$downloads_looker - 
+                                   compare_sum$downloads) / compare_sum$downloads)
+compare_sum$err_listeners <- (abs(compare_sum$listeners_looker - 
+                                   compare_sum$listeners) / compare_sum$listeners)
+
+compare_avg$err_downloads <- (abs(compare_avg$downloads_looker - 
+                                   compare_avg$downloads) / compare_avg$downloads)
+```
+
+
+```{r}
+ggplot(compare_sum) + 
+  geom_line(aes(x = month,
+                y = downloads),
+            color = "blue") +
+  geom_line(aes(x = month,
+                y = downloads_looker),
+            color = "red") +
+  geom_vline(xintercept = compare_sum$month,
+             linetype = "dashed",
+             color = "#f4f4f4") +
+  scale_x_date(breaks = compare_sum$month) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+ggplot(compare_sum %>% filter(month > as.Date("2016-03-01"))) + 
+  geom_line(aes(x = month,
+                y = err_downloads),
+            color = "red") +
+  stat_smooth(aes(x = month,
+                y = err_downloads)) +
+  geom_vline(xintercept = compare_sum$month,
+             linetype = "dashed",
+             color = "#f4f4f4") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_date(breaks = compare_sum$month) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
+
+
+
+
+```{r}
+ggplot(compare_avg) + 
+  geom_line(aes(x = month,
+                y = downloads),
+            color = "blue") +
+  geom_line(aes(x = month,
+                y = downloads_looker),
+            color = "red") +
+  geom_vline(xintercept = compare_avg$month,
+             linetype = "dashed",
+             color = "#f4f4f4") +
+  scale_x_date(breaks = compare_avg$month) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
+
+```{r}
+ggplot(compare_sum) + 
+  geom_line(aes(x = month,
+                y = listeners),
+            color = "blue") +
+  geom_line(aes(x = month,
+                y = listeners_looker),
+            color = "red") +
+  geom_vline(xintercept = compare_sum$month,
+             linetype = "dashed",
+             color = "#f4f4f4") +
+  scale_x_date(breaks = compare_sum$month) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+unique(splunk$show)[c(unique(splunk$show) %!in% unique(looker$show))]
+
+length(unique(splunk$show))
+sort(unique(looker$show))
+```
+
+#Test for show inequalities
+```{r}
+problem <- compare %>% filter(month >= as.Date("2017-09-01"))
+a <- problem %>% filter(complete.cases(problem))
+
+
+Metrics::mse(a$downloads, a$downloads_looker)
+a <- Metrics::mape(a$downloads, a$downloads_looker)
+
+test1 <- data.frame(show = NA,
+                    mape = NA,
+                    three_mo_delta = NA)
+counter <-  1
+for(i in unique(problem$show)){
+  temp <- problem %>% 
+    filter(show != i)
+  
+  temp2 <- temp %>% filter(complete.cases(temp))
+  mape1 <- Metrics::mape(temp2$downloads, temp2$downloads_looker)
+  
+  compare_sum_t <- temp2 %>%
+  select(-show) %>% 
+  group_by(month) %>% 
+  summarise_all(funs(sum)) %>% 
+  mutate(err_downloads = (abs(downloads_looker - downloads) / downloads) * 100) %>%
+  select(month, err_downloads)
+  
+  delta <- compare_sum_t$err_downloads[nrow(compare_sum_t)]- compare_sum_t$err_downloads[nrow(compare_sum_t) - 2]
+  test1[counter, 1] <- i
+  test1[counter, 2] <- mape1
+  test1[counter, 3] <- delta
+     
+  print(ggplot(compare_sum_t,
+               aes(x = month,
+                   y = err_downloads)) +
+          labs(title = i) +
+          geom_line() +
+          my_theme)
+  counter <- counter + 1
+       
+  }
+
+
+```
+
+
+
+

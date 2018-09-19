@@ -1,0 +1,136 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+#Read Data
+d <- fread("~/Documents/Podcast S1 Forecast/per day data/ondemand_clean.csv") %>% 
+  mutate(month_date = as.Date(paste("01-", month, sep = ""), format = "%d-%b-%Y")) %>%
+  filter(story_start_date >= as.Date("2016-03-01"))
+show_data <- read.csv("~/Documents/Podcast S1 Forecast/per day data/show_data.csv")
+show_data$show <- ifelse(show_data$show == "Radiolab Presents: More Perfect",
+                           "More Perfect", as.character(show_data$show))
+
+#Process
+d[, grep("date", colnames(d))] <- lapply(d[, grep("date", colnames(d))],
+                                        function(x) as.Date(x, format = "%Y-%m-%d"))
+show_data <- data_frame(show = c(show_data$show, "Death, Sex & Money", "Note to Self", "Freakonomics Radio"))
+
+d <- d %>% filter(show %in% show_data$show)
+```
+
+```{r}
+#dataframe w/the day of release of the first episode
+a <- d %>% group_by(show) %>%
+  filter(story_start_date == min(story_start_date)) %>% 
+  summarise(ep = story[1])
+#dataframe w not the first story (feed warmer), start date of that one
+d <- d %>% filter(story %!in% a[a$show != "The New Yorker Comment",]$ep) %>%
+  group_by(show, story) %>% 
+  mutate(story_start_date1 = min(date))
+
+temp <- d %>% group_by(show, story) %>%
+  summarise(n_sdates = n_distinct(story_start_date),
+            story_start_date = min(story_start_date),
+            story_start_date1 = min(story_start_date1),
+            timediff = difftime(story_start_date1, story_start_date),
+            orig_dls = ifelse(length(which(date == min(story_start_date))) == 0, NA,
+                              downloads[which(date == min(story_start_date))]),
+            new_dls = downloads[which(date == story_start_date1[1])][1]) %>%
+  mutate(story_start_date_real =  if_else(is.na(orig_dls) | n_sdates > 1, story_start_date1,
+                                  story_start_date)) %>% 
+  filter(timediff != 0 |
+         n_sdates > 1)
+
+d <- d %>%
+  left_join(temp %>% select(show, story, story_start_date_real)) %>% 
+  mutate(story_start_date = as.Date(if_else(!is.na(story_start_date_real),
+                                   story_start_date_real,
+                                   story_start_date))) %>% 
+  select(-story_start_date_real)
+
+d$published_that_day <- ifelse(d$date == d$story_start_date, 1, 0)
+rm(a,temp)
+```
+
+#Aggregation Datasets
+```{r}
+#Daylevel
+d_daylevel <- d %>% select(date, show, downloads, story_start_date, published_that_day) %>%
+  group_by(show,date) %>% 
+  summarise(downloads = sum(downloads),
+            release = sum(published_that_day)) %>% 
+  arrange(show,date) %>%
+  group_by(show) %>%
+  mutate(ma = cumsum(downloads) / row_number(date),
+         cum_dls = cumsum(downloads),
+         total_episodes = cumsum(release)) %>% 
+  ungroup() %>% 
+  group_by(show) %>%
+  filter(date >= min(c(date[which(release > 0)])) &
+           downloads > 20) %>%  #this step eliminate long periods of no downloads before launch
+  mutate(rleid = rleid(release)) %>% #this counts the length of days w/o releases to establish season 
+  group_by(show, rleid) %>% 
+  mutate(in_season = ifelse(sum(release) > 0, 1,
+                            ifelse(length(release) > 20, 0, 1))) %>% #more than 20 days of silence defines off-season
+  ungroup()
+```
+
+```{r}
+sort(unique(d_daylevel$show))
+```
+
+```{r}
+d_daylevel <- d_daylevel %>% 
+  mutate(campaign = ifelse(show == "Stay Tuned with Preet" & between(date, "2018-01-04", "2018-01-17"), 1,
+                           ifelse(show == "Freakonomics Radio"  & between(date, "2018-01-31", "2018-02-02"), 1,
+                                  ifelse(show == "Late Night Whenever" & between(date, "2018-04-03", "2018-04-14"), 1,
+                                         ifelse(show == "Death, Sex & Money" & between(date, "2018-02-19", "2018-02-27"), 1,
+                                                ifelse(show == "Note to Self" & between(date, "2018-03-26", "2018-04-03"), 1,
+                                                       ifelse(show == "More Perfect"  & between(date, "2017-10-02", "2017-10-10"), 1,0)))))))
+```
+
+
+```{r}
+d_campaigns <- d_daylevel %>%
+  filter(show %in% c("Stay Tuned with Preet", "Freakonomics Radio",
+                     "Late Night Whenever", "Death, Sex & Money",
+                     "Note to Self", "More Perfect")) %>%
+   
+  group_by(show) %>% 
+  mutate(camp = ifelse(date >= (min(date[which(campaign == 1)]) - 7) &
+                       date < (min(date[which(campaign == 1)])) &
+                         campaign !=1, "pre",
+                       ifelse(campaign == 1, "campaign",
+                              ifelse(date <= (max(date[which(campaign == 1)]) + 7) &
+                                       date > (min(date[which(campaign == 1)])) &
+                                campaign !=1, "post", NA)))) %>%
+  filter(date >= (min(date[which(campaign == 1)]) - 14),
+         date <= (max(date[which(campaign == 1)]) + 14)) %>% 
+  group_by(show, camp) %>% 
+  mutate(avg_wk = mean(downloads))
+```
+
+```{r}
+for(i in unique(d_campaigns$show)){
+  print(ggplot(d_campaigns %>% filter(show == i)) +
+    labs(title = i) +
+    geom_line(aes(x = date,
+                  y = downloads,
+                  color = campaign))+
+    geom_line(data=d_campaigns %>% 
+                filter(show ==i,
+                       camp %in% c("pre", "post")),
+              aes(x = date,
+                  y = avg_wk),
+              color = "red") +
+      my_theme +
+      theme(legend.position = "none")) 
+}
+```
+
+
+

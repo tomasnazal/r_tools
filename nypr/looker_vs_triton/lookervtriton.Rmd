@@ -1,0 +1,140 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(stringdist)
+```
+
+
+```{r}
+d <- read.csv("triton_looker.csv")
+d$month <- as.Date(
+  paste0(
+    str_extract(d$month, "..$"),
+    "-",
+    sub("/.*","", d$month),
+    "-",
+    "01"),
+  format = "%y-%m-%d"
+  )
+d <- gather(d, station, cume, 2:ncol(d))
+d$cume <- as.numeric(gsub(",","",d$cume))
+d$station <- gsub("\\.+"," ", d$station)
+d$station[1:396] <- paste0("WNYC ", d$station[1:396])
+```
+
+```{r}
+triton <- read.csv("triton_metrics.csv")
+triton[,c(1,2,4,5)] <- NULL
+triton$Interval <- as.Date(triton$Interval, format = "%Y-%m-%d")
+colnames(triton) <- tolower(colnames(triton))
+triton$station <- tolower(triton$station)
+triton$station <- ifelse(grepl("wnjy/njpr", triton$station),
+                         gsub("wnjy/njpr", "njpr", triton$station),
+                         triton$station)
+triton$station <- ifelse(grepl("-holiday stream ", triton$station),
+                         gsub("-holiday stream ", "(holiday stream) ", triton$station),
+                         triton$station)
+triton$station <- ifelse(grepl("wqxr_fm ", triton$station),
+                         gsub("wqxr_fm ", "wqxr ", triton$station),
+                         triton$station)
+triton$station <- ifelse(grepl("wqxr mobile app", triton$station),
+                         gsub("wqxr mobile app", "wqxr app", triton$station),
+                         triton$station)
+triton$station <- ifelse(grepl("wnyc special events other", triton$station),
+                         gsub("wnyc special events other", "wnyc special other", triton$station),
+                         triton$station)
+
+looker <- read.csv("looker_ls_metrics.csv")
+colnames(looker) <- c("station", "month", "cume", "tlh", "as")
+looker$month <- as.Date(paste0(looker$month, "-01"),
+                        format = "%Y-%m-%d")
+looker$station <- tolower(looker$station)
+looker$station <- ifelse(grepl("wnjy/njpr", looker$station),
+                         gsub("wnjy/njpr", "njpr", looker$station),
+                         looker$station)
+```
+
+```{r}
+comp <- data.frame(looker = sort(unique(looker$station)),
+                   triton = sort(unique(triton$station)))
+```
+
+```{r}
+lookup <- data.frame(looker = sort(unique(looker$station)))
+for(i in 1:nrow(lookup)){
+  lookup$tomatch[i] <-  unique(as.character(comp$triton))[amatch(lookup$looker[i],
+                                                                  unique(comp$triton),
+                                                                  maxDist = 5)]
+}
+
+looker <- left_join(looker, lookup, by = c("station" = "looker"))
+colnames(looker)[3:5] <- paste0(colnames(looker)[3:5], "_looker")
+comp <- left_join(triton, looker %>% select(-station),
+                  by = c("station" = "tomatch",
+                         "interval" = "month"))
+
+
+```
+
+
+
+```{r}
+for(i in unique(comp$station)){
+  print(
+    ggplot(comp %>% filter(station == i) %>%
+             select(station, interval,
+                    cume, cume_looker) %>%
+             gather(channel, cume, 3:4)) +
+      labs(title = i) +
+      geom_line(aes(x = interval,
+                    y = cume,
+                    color = channel)) +
+      scale_x_date(breaks = unique(comp %>% filter(station == i) %>%
+             select(station, interval,
+                    cume, cume_looker) %>%
+             gather(channel, cume, 3:4) %>% 
+               pull(interval))) +
+      my_theme +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1),
+            legend.position = "none")
+  )
+}
+```
+
+
+```{r}
+animation::saveGIF({
+  for(i in unique(comp$station)){
+      print(
+        ggplot(comp %>% filter(station == i) %>%
+                 select(station, interval,
+                        cume, cume_looker) %>%
+                 gather(channel, cume, 3:4)) +
+          labs(title = i) +
+          geom_line(aes(x = interval,
+                        y = cume,
+                        color = channel)) +
+          scale_x_date(breaks = unique(comp %>% filter(station == i) %>%
+                 select(station, interval,
+                        cume, cume_looker) %>%
+                 gather(channel, cume, 3:4) %>% 
+                   pull(interval))) +
+          my_theme +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1),
+                legend.position = "none")
+      )
+    }
+  }, ani.width = 800,
+ ani.height = 500,
+movie.name = "trouble_paradise.gif")
+```
+
+
+
+

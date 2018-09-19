@@ -1,0 +1,203 @@
+---
+title: 'Health Channel Pre-Launch Stats'
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows 
+    source_code: embed
+---
+
+```{r}
+library(dplyr)
+library(quanteda)
+library(tm)
+library(wordcloud)
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#read data
+non_listeners <- read.csv("non_listeners.csv")
+one_time <- read.csv("one_time_donors.csv")
+sustaining <- read.csv("sustaining.csv")
+non_listeners_rep <- read.csv("non_listener_report.csv")
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Define Functions
+
+##Space Cleaning Function
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+
+#Makes Wordclouds from character vectors
+wcfromvector <-  function(textvector, wcwords, user_stp_words = NA, grams = 1){
+  #Text as corpus
+  corpus <- Corpus(VectorSource(paste(textvector, collapse = " ")))
+  #Clean Whitespace
+  corpus <- tm_map(corpus, toSpace, "/")
+  corpus <- tm_map(corpus, toSpace, "@")
+  corpus <- tm_map(corpus, toSpace, "\\|")
+  # Convert the text to lower case
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  # Remove numbers
+  corpus <- tm_map(corpus, removeNumbers)
+  # Remove english common stopwords
+  corpus <- tm_map(corpus, removeWords, stopwords("english"))
+  # specify your stopwords as a character vector
+  #corpus <- tm_map(corpus, removeWords, user_stp_words) 
+  # Remove punctuations
+  corpus <- tm_map(corpus, removePunctuation)
+  # Eliminate extra white spaces
+  corpus <- tm_map(corpus, stripWhitespace)
+  #Document Term matrix
+  # dtm <- TermDocumentMatrix(corpus)
+  # m <- as.matrix(dtm)
+  # v <- sort(rowSums(m),decreasing=TRUE)
+  # d <- data.frame(word = names(v),freq=v)
+  d <- corpus %>% 
+  unlist() %>%  
+  tokens() %>%
+  tokens_ngrams(grams, concatenator = " ") %>%  
+  unlist() %>%  
+  as.data.frame() %>% 
+  group_by_(".") %>%  
+  summarize(cnt=n()) %>%
+  arrange(desc(cnt))
+  #Make Wordcloud
+  set.seed(1234)
+  wordcloud(words = d$., freq = d$cnt, min.freq = 1,
+            max.words=wcwords, random.order=FALSE, rot.per=0, 
+            colors=brewer.pal(8, "Dark2"))
+}
+```
+
+
+One Word - Non Listeners
+====================
+
+Row 
+---------------------------------------
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Liked")
+wcfromvector(non_listeners_rep$What.was.your.favorite.part.of..Pull.Quote.., 100, grams = 1)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Disliked")
+wcfromvector(non_listeners_rep$What.was.your.least.favorite.part.of..Pull.Quote.., 100)
+```
+
+One Word - One Time Donors
+====================
+
+Row 
+---------------------------------------
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Liked")
+wcfromvector(one_time$What.was.your.favorite.part.of..Pull.Quote.., 100)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Disliked")
+wcfromvector(one_time$What.was.your.least.favorite.part.of..Pull.Quote.. , 100)
+```
+
+One Word - Sustainers
+====================
+
+Row 
+---------------------------------------
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Liked")
+wcfromvector(sustaining$What.was.your.favorite.part.of..Pull.Quote.., 100)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Disliked")
+wcfromvector(sustaining$What.was.your.least.favorite.part.of..Pull.Quote.. , 100)
+```
+
+Two Words - Non Listeners
+====================
+
+Row 
+---------------------------------------
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Liked")
+wcfromvector(non_listeners_rep$What.was.your.favorite.part.of..Pull.Quote.., 100, grams = 2)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Disliked")
+wcfromvector(non_listeners_rep$What.was.your.least.favorite.part.of..Pull.Quote.., 100, grams = 2)
+```
+
+Two Words - One Time Donors
+====================
+
+Row 
+---------------------------------------
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Liked")
+wcfromvector(one_time$What.was.your.favorite.part.of..Pull.Quote.., 100, grams = 2)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Disliked")
+wcfromvector(one_time$What.was.your.least.favorite.part.of..Pull.Quote.. , 100, grams = 2)
+```
+
+Two Words - Sustainers
+====================
+
+Row 
+---------------------------------------
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Liked")
+wcfromvector(sustaining$What.was.your.favorite.part.of..Pull.Quote.., 100, grams = 2)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+layout(matrix(c(1, 2), nrow=2), heights=c(0.8, 8))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "What They Disliked")
+wcfromvector(sustaining$What.was.your.least.favorite.part.of..Pull.Quote.. , 100, grams = 2)
+```

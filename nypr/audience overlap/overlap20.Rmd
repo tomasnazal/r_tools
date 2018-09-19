@@ -1,0 +1,511 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+# SELECT
+#   show.show_name AS show
+#   , EXTRACT(MONTH FROM odl.listen_timestamp) AS month
+#   , ip_useragent_hash AS listeners
+# FROM ${on_demand_listens_unique.SQL_TABLE_NAME} AS odl INNER JOIN
+#   show ON odl.show_id = show.show_id
+# WHERE EXTRACT(YEAR from odl.listen_timestamp) = 2018 AND
+#   EXTRACT(MONTH from odl.listen_timestamp) IN (4,5) AND
+#   show.show_name IN ('Radiolab'
+#     ,'Freakonomics Radio'
+#     ,'More Perfect'
+#     ,'On The Media'
+#     ,'Snap Judgment'
+#     ,'The New Yorker Radio Hour'
+#     ,'Death, Sex & Money'
+#     ,'2 Dope Queens'
+#     ,'Here''s The Thing'
+#     ,'Note to Self'
+#     ,'Stay Tuned with Preet'
+#     ,'The New Yorker: Politics and More'
+#     ,'Nancy'
+#     ,'Sooo Many White Guys'
+#     ,'Science Friday'
+#     ,'Snap Judgment Presents: Spooked'
+#     ,'The New Yorker: Fiction'
+#     ,'Late Night Whenever'
+#     ,'The Brian Lehrer Show'
+#     ,'Trump, Inc.')
+# GROUP BY 1, 2, 3
+```
+
+#primer
+```{r}
+library(UpSetR)
+library(grid)
+library(gridExtra)
+library(glue)
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(mytools)
+library(gtable)
+library(egg)
+```
+
+```{r}
+#parameters
+
+#max_intersect is the max number of intersections to graph
+#for limits of plots and background grey strips
+max_intersects <- 40
+```
+
+#processing
+##read data
+```{r}
+d_overlap <- fread("overlaps.csv")
+#d_overlap <- d_overlap %>% filter(month !=5)
+```
+
+##processing
+```{r}
+#list of unique listeners hashes to generate boolean matrix
+hash_list <- list(unique(d_overlap$listeners))
+match_list <- list()
+  
+#for loop iterates for show and month. checks if unique 
+#lisener hashes are in a particular show/month 
+for(i in unique(d_overlap$show)){
+  show_listeners <- d_overlap %>% filter(show == i)
+  for(mo in 2:4){
+    show_listeners_l <- show_listeners %>%
+      filter(month == mo) %>% pull(listeners)
+    match_list[[glue("{i}_{mo}")]] <- hash_list[[1]] %in% show_listeners_l
+  }
+}
+overlaps <- as.data.frame(match_list)
+overlaps <- overlaps %>% mutate_all(funs(as.numeric(.)))
+
+#each month data into a df list
+overlaps_list <- list()
+for(i in unique(d_overlap$month)){
+  overlaps_list[[month.name[i]]] <- overlaps[,c(grep(i,
+                                   colnames(overlaps)))]
+}
+  
+#Total unique listeners per show
+for(i in unique(d_overlap$month)){
+   overlaps_list[[glue("total_uniques_{month.name[i]}")]] <- 
+     data.frame(show = names(colSums(overlaps_list[month.name[i]][[1]])),
+                listeners = colSums(overlaps_list[month.name[i]][[1]]))
+}
+rm(hash_list, match_list, show_listeners, show_listeners_l, overlaps, d_overlap, i, mo)
+
+#This counts the number of cases with the same info in rows
+#First row has all case Falses (these are the IDs not in the month selected)
+over_counts <- plyr::count(overlaps_list["April"][[1]]) %>%
+  slice(-1) %>% 
+  arrange(desc(freq))
+colnames(over_counts) <- gsub("_[0-9]", "",
+                              gsub("\\.", " ", colnames(over_counts)))
+```
+
+
+#plots dataframes
+```{r}
+#Matrix for matrix plot
+over_matrix <- as.data.frame(t(as.matrix(over_counts %>% select(-freq))))
+colnames(over_matrix) <- 1:ncol(over_matrix)
+over_matrix <- over_matrix %>%
+  mutate(show = rownames(.)) %>% 
+  gather(x, y_logic,1:ncol(over_matrix)) %>%
+  group_by(x) %>%
+  ungroup() %>% 
+  mutate(x = as.numeric(x))
+
+#For the segments of the matrix plot
+over_segments <- over_matrix %>%
+  group_by(x) %>%
+  filter(y_logic == T) %>%
+  summarise(y_end = min(show),
+            y_beg = max(show))
+
+#For the light grey background polygons
+over_background <- data.frame(show = seq(1,max(as.numeric(as.factor(over_matrix$show))),2))
+for(i in 1:length(over_background$show)){
+  k <- over_background$show[i]
+  over_background$y[i] <- list(c(k-0.5, k+0.5, k+0.5, k-0.5))
+  over_background$x[i] <- list(c(0.11, 0.11, max_intersects, max_intersects))
+}
+over_background <- unnest(over_background)
+
+#For total listeners/unique listeners barplot
+over_totals <- overlaps_list["total_uniques_April"][[1]]
+over_totals$show <- gsub("_[0-9]", "",
+                              gsub("\\.", " ", over_totals$show))
+partials <- over_counts %>%
+  filter(rowSums(.) - freq == 1) %>%
+  mutate_at(1:ncol(over_counts[-grep("freq", colnames(over_counts))]),
+            funs(freq[which(. == 1)])) %>%
+  select(-freq) %>%
+  slice(1) %>%
+  t() %>%
+  as.data.frame()
+over_totals$uniques <- partials$V1
+over_totals$prop <- round(over_totals$uniques/over_totals$listeners, 2)
+rm(partials)
+
+
+```
+
+
+
+#plots
+```{r}
+p_intersect <- 
+  ggplot(over_counts,
+       aes(x = row_number(desc(freq)),
+           y = freq)) +
+  labs(x = "",
+       y = "Intersection Size") +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = scales::comma(freq)),
+            size = 3,
+            angle = 45,
+            vjust = -0.5,
+            hjust = 0) +
+  scale_y_continuous(limits = c(0, 4700000))+
+  scale_x_continuous(limits = c(0.1,max_intersects)) +
+  my_theme +
+  theme(axis.ticks.x = element_blank(),
+        plot.margin=unit(c(0,0,-0.9,0), "cm"),
+        axis.text.x = element_blank()
+    )
+```
+
+```{r}
+p_matrix <- ggplot(over_matrix) +
+  labs(x = "", y = "") +
+   geom_polygon(data = over_background,
+                aes(x = x,
+                    y = y,
+                    group = show),
+                fill = "gray96") +
+  geom_point(aes(x = x,
+                 y = as.numeric(as.factor(show)),
+                 color = as.factor(y_logic)),
+             size = 2) +
+  geom_segment(aes(x = x, xend = x,
+                   y = as.numeric(as.factor(y_beg)), yend = as.numeric(as.factor(y_end))),
+               size = 1,
+               data = over_segments) +
+  scale_color_manual(values = c("grey", "black")) +
+  scale_x_continuous(limits = c(0.1,max_intersects)) +
+  scale_y_continuous(breaks = 1:max(as.numeric(as.factor(over_matrix$show))),
+                     labels = levels(as.factor(over_matrix$show))) +
+  my_theme +
+  theme(legend.position = "none",
+        #plot.margin=unit(c(-0.2,0,0,0), "cm"),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())
+```
+
+```{r}
+p_totals <- ggplot(over_totals %>% 
+                     arrange(prop) %>% 
+                     mutate(show = factor(show, levels = show))) +
+  labs(title = "Total Audience Size and Percentage of Exclusive Audience: April.") +
+  geom_bar(aes(x = show,
+               y = listeners),
+           stat = "identity",
+           fill = "#444444") +
+  geom_bar(aes(x = show,
+               y = uniques),
+           stat = "identity",
+           fill = "#ba2727") +
+  geom_text(aes(x = show,
+                y = listeners,
+                label = paste0(prop * 100, "%")),
+            color = "black",
+            hjust = -0.1,
+            size = 3) +
+  my_theme+
+  theme(plot.title = element_text(hjust = 1.2)) +
+  coord_flip()
+```
+
+```{r}
+p_totals
+```
+
+
+
+```{r, fig.height= 8}
+ggarrange(p_intersect, p_matrix, heights = c(5,6), top = "Exclusive Audicene Size of Show Overlaps. Top 40. April.")
+```
+
+
+#overlap Analysis
+```{r}
+#keep only the intersections
+over_counts_multi <- over_counts %>% 
+  filter(rowSums(.) - freq > 1) %>% 
+  arrange(desc(freq))
+```
+
+
+##plot
+```{r}
+#Matrix for matrix plot
+over_matrix_multi <- as.data.frame(t(as.matrix(over_counts_multi %>% select(-freq))))
+colnames(over_matrix_multi) <- 1:ncol(over_matrix_multi)
+over_matrix_multi <- over_matrix_multi %>%
+  mutate(show = as.factor(rownames(.))) %>% 
+  gather(x, y_logic,1:ncol(over_matrix_multi)) %>%
+  group_by(x) %>%
+  ungroup() %>% 
+  mutate(x = as.numeric(x))
+
+#For the segments of the matrix plot
+over_segments_multi <- over_matrix_multi %>%
+  group_by(x) %>%
+  filter(y_logic == T) %>%
+  summarise(y_end = min(as.numeric(show)),
+            y_beg = max(as.numeric(show))) #%>% 
+  # mutate(y_beg = factor(y_beg, levels = levels(over_matrix_multi$show)),
+  #        y_end = factor(y_end, levels = levels(over_matrix_multi$show)))
+
+#For the light grey background polygons
+over_background_multi<- data.frame(show = seq(1,max(as.numeric(as.factor(over_matrix_multi$show))),2))
+for(i in 1:length(over_background_multi$show)){
+  k <- over_background_multi$show[i]
+  over_background_multi$y[i] <- list(c(k-0.5, k+0.5, k+0.5, k-0.5))
+  over_background_multi$x[i] <- list(c(0.11, 0.11, max_intersects, max_intersects))
+}
+over_background_multi <- unnest(over_background_multi)
+
+```
+
+
+```{r}
+p_intersect_multi <- 
+  ggplot(over_counts_multi,
+       aes(x = row_number(desc(freq)),
+           y = freq)) +
+  labs(x = "",
+       y = "Intersection Size") +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = scales::comma(freq)),
+            size = 3,
+            angle = 45,
+            vjust = -0.5,
+            hjust = 0) +
+  scale_y_continuous(limits = c(0, 720000))+
+  scale_x_continuous(limits = c(0.1,max_intersects)) +
+  my_theme +
+  theme(axis.ticks.x = element_blank(),
+        plot.margin=unit(c(0,0,-0.9,0), "cm"),
+        axis.text.x = element_blank()
+    )
+```
+
+```{r}
+p_matrix_multi <- ggplot(over_matrix_multi) +
+  labs(x = "", y = "") +
+   geom_polygon(data = over_background_multi,
+                aes(x = x,
+                    y = y,
+                    group = show),
+                fill = "gray96") +
+  geom_point(aes(x = x,
+                 y = as.numeric(as.factor(show)),
+                 color = as.factor(y_logic)),
+             size = 2) +
+  geom_segment(aes(x = x, xend = x,
+                   y = as.numeric(y_beg), yend = as.numeric(y_end)),
+               size = 1,
+               data = over_segments_multi) +
+  scale_color_manual(values = c("grey", "black")) +
+  scale_x_continuous(limits = c(0.1,max_intersects)) +
+  scale_y_continuous(breaks = 1:max(as.numeric(as.factor(over_matrix_multi$show))),
+                     labels = levels(as.factor(over_matrix_multi$show))) +
+  my_theme +
+  theme(legend.position = "none",
+        #plot.margin=unit(c(-0.2,0,0,0), "cm"),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())
+```
+
+
+```{r, fig.height= 8}
+ggarrange(p_intersect_multi, p_matrix_multi, heights = c(5,6), top = "Exclusive Audience Size of Show Overlaps. >1 Set Unions. Top 40. April.")
+```
+
+
+
+##lists for PCA clustering
+```{r}
+show_closest <- list()
+for(i in colnames(over_counts_multi %>% select(-freq))){
+  sel <- over_counts_multi[,i] == 1
+  proxima <- over_counts_multi[sel,]
+  proxima <- proxima %>% filter(rowSums(.) - freq <= 2)
+  proxima <- proxima[-grep(i, colnames(proxima))]
+  prox_shows <- (ifelse(proxima == 1,  names(proxima)[col(proxima)], NA))
+  prox_shows <- apply(prox_shows, 1, paste, collapse = ", ")
+  prox_shows <- gsub("NA, | , NA|, NA", "", prox_shows)
+  proxima <- data.frame(shows = c(prox_shows, i),
+                        size = c(proxima$freq,
+                        over_counts[over_counts[[i]] == 1,] %>% filter(rowSums(.) - freq == 1) %>% pull(freq))) %>% 
+    arrange(shows)
+  show_closest[[i]] <- proxima[] 
+}
+
+show_closest$`Snap Judgment`$shows <- ifelse(show_closest$`Snap Judgment`$shows == "NA", "Snap Judgment Presents  Spooked", as.character(show_closest$`Snap Judgment`$shows))
+show_closest$`Snap Judgment` <- arrange(show_closest$`Snap Judgment`, shows)
+```
+
+```{r}
+#compile the separate listener lists into one matrix
+for_pca <- as.data.frame(t(show_closest[[1]][,2]))
+colnames(for_pca) <- show_closest[[1]][1][[1]]
+rownames(for_pca) <- names(show_closest[1])
+for(i in 2:length(show_closest)){
+  for_pca[i,] <- t(show_closest[[i]][,2])
+  rownames(for_pca)[i] <- names(show_closest[i])
+}
+
+#Principal Componenet Analysis
+pca1 = prcomp(for_pca, scale. = T)
+
+ggplot(as.data.frame(pca1$x) %>% 
+         mutate(show = rownames(.)),
+       aes(x = PC1,
+           y = PC2,
+           color = show)) +
+  labs(title = "Principal Component Analysis of Shows Overlap") +
+  geom_text_repel(aes(label = show),
+                  size = 3,
+                  direction = "y") +
+  geom_point() +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+```{r}
+#kmeans on roaw data
+k_means <- kmeans(for_pca, 4)
+
+ks_shows <- as.data.frame(pca1$x) %>% 
+         mutate(show = rownames(.))
+
+ks_shows$cluster <- k_means$cluster
+
+set.seed(1234)
+k_mean_on_pca <- kmeans(pca1$x, 5)
+ks_shows$cluster2 <- k_mean_on_pca$cluster
+
+
+
+clusternames <- data.frame(cluster2 = c(1:5),
+                           names = c("Big Shows",
+                                     "New Yorkewr Properties",
+                                     "2DQ Roaster",
+                                     "Snap Judgement",
+                                     "Politics and More"))
+
+ks_shows <- ks_shows %>% left_join(clusternames)
+
+ggplot(ks_shows,
+       aes(x = PC1,
+           y = PC2,
+           color = as.factor(cluster2))) +
+  labs(title = "Principal Component Analysis of Shows Overlap") +
+  geom_text_repel(aes(label = show),
+                  size = 3,
+                  direction = "y") +
+  geom_point() +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+#list of anotations for 3d plot
+annotations_list <- list()
+for(i in 1:nrow(ks_shows)){
+  annotations_list[[i]] <- list(showarrow = F,
+                              x = ks_shows$PC1[i],
+                              y = ks_shows$PC2[i],
+                              z = ks_shows$PC3[i],
+                              text = ks_shows$show[i],
+                              xanchor = "left",
+                              xshift = 10,
+                              opacity = 0.7,
+                              font = list(
+                                color = "grey",
+                                size = 9
+                                ))
+}
+
+#plot
+p_ly <- plot_ly(ks_shows, x=~PC1, y=~PC2, z=~PC3, color = ~as.factor(names),
+         text = ~paste('Show:', show)) %>%
+  layout(title = 'Show Clusters Based On Audience Overlap',
+         scene = list(
+      aspectratio = list(
+        x = 1,
+        y = 1,
+        z = 1
+      ),
+      camera = list(
+        center = list(
+          x = 0,
+          y = 0,
+          z = 0
+        ),
+        up = list(
+          x = 0,
+          y = 0,
+          z = 1
+        )
+      ),
+      dragmode = "turntable",
+      xaxis = list(
+        title = "PC1"
+      ),
+      yaxis = list(
+        title = "PC2"
+      ),
+      zaxis = list(
+        title = "PC3"
+      ),
+      annotations = annotations_list
+      ))
+
+```
+
+```{r}
+p_ly
+```
+
+
+```{r}
+saveWidget(p_ly, file = "show_clusters.html")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

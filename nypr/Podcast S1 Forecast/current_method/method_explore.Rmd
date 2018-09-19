@@ -1,0 +1,151 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(mytools)
+```
+
+```{r}
+d <- fread("past_comps.csv")
+valid_stories <- read.csv("valid_stories.csv")
+colnames(d) <- c("story", "publish_date", "feed", "show", "downloads")
+d$publish_date <- as.Date(d$publish_date, format = "%Y-%m-%d")
+d <- d %>% arrange(show, feed, publish_date)
+d <- d %>% filter(story %in% valid_stories$stories)
+
+
+c <- fread("studios_ep_mo.csv")
+colnames(c) <- c("show", "story", "publish_date", "feed", "month", "downloads")
+c <- c %>% filter(show != "The Takeaway")
+c$publish_date <- as.Date(c$publish_date, format = "%Y-%m-%d")
+c$month <- as.Date(paste0(c$month, "-01"), format = "%Y-%m-%d")
+```
+
+
+```{r}
+d_first_season <- d %>% slice(c(1:12, 49:58, 59:114, 116:162, 181:191, 219:227, 243:251))
+```
+
+```{r}
+d_summary <- d %>%
+  group_by(show) %>% 
+  summarise(min = min(downloads),
+            first_q = quantile(downloads, .25),
+            mean = mean(downloads),
+            median = median(downloads),
+            third_q = quantile(downloads, .75),
+            max = max(downloads),
+            sd = sd(downloads))
+
+d_fs_summary <- d %>%
+  group_by(show) %>% 
+  summarise(min = min(downloads),
+            first_q = quantile(downloads, .25),
+            mean = mean(downloads),
+            median = median(downloads),
+            third_q = quantile(downloads, .75),
+            max = max(downloads),
+            sd = sd(downloads))
+```
+
+
+```{r}
+d %>% group_by(show) %>% summarise(summary(downloads))
+```
+
+
+```{r}
+mean(d_fs_summary[c(6,7,3),]$mean)#TRUMP
+mean(d_fs_summary[c(5,1,2),]$mean)#LNW
+mean(d_fs_summary[c(7,6),]$mean)#CAUGHT
+mean(c(d_fs_summary[c(4,6),]$mean, 80000))#AE
+
+```
+
+```{r}
+median(d_fs_summary[c(6,7,3),]$median)#TRUMP
+median(d_fs_summary[c(5,1,2),]$median)#LNW
+median(d_fs_summary[c(7,6),]$median)#CAUGHT
+median(c(d_fs_summary[c(4,6),]$median, 80000))#AE
+```
+
+```{r}
+median(d_fs_summary[c(6,7,3),]$first_q)#TRUMP
+median(d_fs_summary[c(5,1,2),]$first_q)#LNW
+median(d_fs_summary[c(7,6),]$first_q)#CAUGHT
+median(c(d_fs_summary[c(4,6),]$first_q))#AE
+```
+
+```{r}
+median(d_fs_summary[c(6,7,3),]$sd) / median(d_fs_summary[c(6,7,3),]$median)#TRUMP
+median(d_fs_summary[c(5,1,2),]$sd)/median(d_fs_summary[c(5,1,2),]$median)#LNW
+median(d_fs_summary[c(7,6),]$sd)/median(d_fs_summary[c(7,6),]$median)#CAUGHT
+median(c(d_fs_summary[c(4,6),]$sd))/median(c(d_fs_summary[c(4,6),]$median, 80000))#AE
+```
+
+
+```{r}
+c_o <- c %>% arrange(show, story, month) %>%
+  group_by(show, story) %>%
+  filter(row_number(month) <3) %>%
+  summarise(downloads = sum(downloads)) %>% 
+  ungroup() %>% 
+  group_by(show) %>% 
+  summarise(mean = mean(downloads),
+            median = median(downloads))
+c_o <- c_o %>% filter(show != "On The Media")
+
+
+
+```
+
+
+```{r}
+c_o <- c_o %>% select(show, median)
+##3 averages 
+show_permutations <- as.data.frame(permutations(n = length(c_o$show), r = 3, v = as.character(c_o$show)))
+show_permutations <- show_permutations %>% left_join(c_o, by = c("V1" = "show"))
+show_permutations <- show_permutations %>% left_join(c_o, by = c("V2" = "show"))
+show_permutations <- show_permutations %>% left_join(c_o, by = c("V3" = "show"))
+
+show_permutations$avg <-  rowMeans(show_permutations[,4:6]) 
+show_permutations$avg <- as.numeric(show_permutations$avg)
+
+
+c_o$mean_all <- NA
+for(i in 1:nrow(c_o)){
+  c_o$mean_all[i] <- mean(c_o [-(grep(as.character(dw_monthly$show[i]),
+                                                   d_monthly$show) ),  ]$avg_dwnlds_month) 
+}
+
+dw_monthly$best_mean <- NA
+dw_monthly$shows <- NA
+
+for(i in 1:nrow(dw_monthly)){
+  temp2 <- show_permutations %>% filter(V1 != i |
+                                          V2 != i |
+                                          V3 != i)
+  temp2$dif <- abs(dw_monthly$avg_dwnlds_month[i] - temp2$avg)
+  
+  
+  index_min <- which.min(temp2$dif)
+  dw_monthly$best_mean[i] <- round(temp2$avg[index_min], 3)
+  dw_monthly$shows[i] <- paste(temp2$V1[index_min],
+                           temp2$V2[index_min],
+                           temp2$V3[index_min],
+                           sep = "; ")
+}
+
+dw_monthly <- dw_monthly %>% 
+  mutate(dif_mean_all = abs(mean_all - avg_dwnlds_month),
+         dif_best_mean = abs(best_mean - avg_dwnlds_month))
+
+```
+
+
+

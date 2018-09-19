@@ -1,0 +1,335 @@
+---
+title: "American Songbook Survey Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, message=FALSE, error=FALSE, warning=FALSE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(quanteda)
+library(tm)
+library(wordcloud)
+library(stringr)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+```
+
+
+```{r}
+#Define Functions
+#not in 
+'%!in%' <- function(x,y) !('%in%'(x,y))
+
+
+##Space Cleaning Function
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+removeSpecialChars <- function(x) gsub("[^a-zA-Z0-9 ]","",x)
+
+#Makes Wordclouds from character vectors
+wcfromvector <-  function(textvector, wcwords, user_stp_words = NA, grams = 1,
+                          minscale = 4,maxscale = .5){
+  #Text as corpus
+  corpus <- Corpus(VectorSource(paste(textvector, collapse = " ")))
+  #Clean Whitespace
+  corpus <- tm_map(corpus, toSpace, "/")
+  corpus <- tm_map(corpus, toSpace, "@")
+  corpus <- tm_map(corpus, toSpace, "\\|")
+  # Convert the text to lower case
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  # Remove numbers
+  corpus <- tm_map(corpus, removeNumbers)
+  # Remove non-alphanumerical
+  corpus <- tm_map(corpus, removeSpecialChars)
+  # Remove english common stopwords
+  corpus <- tm_map(corpus, removeWords, stopwords("english"))
+  # specify your stopwords as a character vector
+  corpus <- tm_map(corpus, removeWords, user_stp_words) 
+  # Remove punctuations
+  corpus <- tm_map(corpus, removePunctuation)
+  # Eliminate extra white spaces
+  corpus <- tm_map(corpus, stripWhitespace)
+  #Document Term matrix
+  # dtm <- TermDocumentMatrix(corpus)
+  # m <- as.matrix(dtm)
+  # v <- sort(rowSums(m),decreasing=TRUE)
+  # d <- data.frame(word = names(v),freq=v)
+  d <- corpus %>% 
+  unlist() %>%  
+  tokens() %>%
+  tokens_ngrams(grams, concatenator = " ") %>%  
+  unlist() %>%  
+  as.data.frame() %>% 
+  group_by_(".") %>%  
+  summarize(cnt=n()) %>%
+  arrange(desc(cnt))
+  #Make Wordcloud
+  set.seed(1234)
+  wordcloud(words = d$., freq = d$cnt, min.freq = 1, scale = c(minscale,maxscale),
+            max.words=wcwords, random.order=FALSE, rot.per=0, 
+            colors=brewer.pal(8, "Dark2"))
+}
+```
+
+
+
+```{r}
+d <- read.csv("sbook.csv")
+ziptostate <- read.csv("zipstate.csv")
+#hoods <- read.csv("")
+```
+
+```{r}
+colnames(d)[c(2,3,24)] <- c("mobile_listen", "website_listen", "other2")
+colnames(d)[grep("zip", colnames(d))] <- "zip"
+d$zip <- ifelse(nchar(d$zip) %!in% c(4,5), NA,
+                ifelse(nchar(d$zip) == 4,
+                       paste("0", d$zip, sep = ""), d$zip))
+d$not_listen <- ifelse(d$other2 %in% c("I do not ever listen to it",
+                                      "I don't listen to this music",
+                                      "i do not listen to it ever",
+                                      "I do not listen, I am Irish and living in Belgium" ,
+                                      "never listen",
+                                      "Never listen",
+                                      "I don’t but maybe now I will",
+                                      "Don’t listen" ,
+                                      "I don’t"), 1, 0)
+
+d$external <- ifelse(d$source %!in% c("newsletter", "stream"), "external source", "newsletter or stream")
+
+ziptostate$Zipcode <- formatC(ziptostate$Zipcode, format= "d", flag = 0, width = 5)
+
+d <- d %>% left_join(ziptostate %>% select(zip = Zipcode, state = State))
+
+#to dummy
+d[c(34:38, 40:50)] <- apply(d[c(34:38, 40:50)], 2, function(x) ifelse(x == "", 0, 1))
+##dummy sets
+d_dum <- d %>% 
+  select(34:38, 40:50) %>%
+  summarise_all(mean)
+
+a <- d_dum %>%
+  select(1:6) %>% 
+  gather(var, val, 2:6)
+
+
+```
+##Location
+
+```{r}
+ggplot(a <- d %>%
+         group_by(state) %>% 
+         summarise(n = length(state)) %>% 
+         arrange(desc(n)) %>% 
+         mutate(state = factor(state, levels = state),
+                n = n / sum(n, na.rm = T) )) +
+  labs(title = "Respondants Distribution by State") +
+  geom_bar(aes(x = state,
+               y = n),
+           stat = "identity",
+          fill = "#1885a3") +
+  scale_y_continuous(labels = scales::percent) +
+  my_theme +
+  theme(axis.text.x = element_text(size = 8, angle = 45),
+        axis.title.y = element_blank())
+```
+
+The Wide Majority of your audience seems to be in NY, followed by NJ. CT and CA are intogether in third place. 
+
+<br>
+<br>
+<br>
+
+##Differences Between External Source Respondents and Jonathan Show Respondants 
+
+###Age
+```{r}
+ggplot(a <- d %>% 
+         group_by(What.s.your.age.) %>% 
+         summarise(n = length(What.s.your.age.)) %>% 
+         mutate(n = n / sum(n, na.rm = T))) +
+  geom_bar(aes(x = What.s.your.age.,
+               y = n#,
+               #fill = as.factor(external)),
+  ),
+           stat = "identity",
+           fill = "#1885a3",
+           position = "dodge") +
+  labs(title = "Age of Respondent by Source",
+       x = "Age",
+       fill = "Source") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10)) +
+  my_theme +
+  theme(axis.text.x = element_text(size = 8, angle = 45),
+        axis.title.y = element_blank(),
+        legend.position = c(0.2,0.5))
+  
+```
+
+Respondents from external sources appear to be older than JS listeners.
+
+<br>
+<br>
+
+
+###Gender
+```{r}
+ggplot(a <- d %>% 
+         filter(What.s.your.gender. %in% c("Female", "Male")) %>% 
+         group_by(What.s.your.gender.) %>% 
+         summarise(n = length(What.s.your.gender.)) %>% 
+         mutate(n = n / sum(n, na.rm = T))) +
+  geom_bar(aes(x = What.s.your.gender.,
+               y = n#,
+               #fill = as.factor(external)
+               ),
+           stat = "identity",
+          fill = "#1885a3",
+           position = "dodge") +
+  labs(title = "Gender of Respondent by Source",
+       fill = "Source",
+       x = "gender") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10)) +
+  my_theme +
+  theme(axis.text.x = element_text(size = 8, angle = 45),
+        axis.title.y = element_blank(),
+        legend.position = c(0.5,0.8))
+  
+```
+
+External Source Respondents are a female majority, in stark contrast to JS sourced respondents.
+
+<br>
+<br>
+
+####Questions
+
+```{r}
+ggplot(a <- d_dum %>% 
+         select(1:5) %>%
+         gather(var, val, 1:5) %>% 
+         mutate(var = gsub("\\.|\\.\\.", " ", var)) %>% 
+         arrange(desc(val)) %>% 
+         mutate(var = factor(var, levels = var))) +
+  geom_bar(aes(x = var,
+               y = val#,
+               #fill = as.factor(external)
+               ),
+           stat = "identity",
+           fill = "#1885a3",
+           position = "dodge") +
+  labs(title = "What else do you want in your American Songbook listening experience?",
+       fill = "Source",
+       x = "") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 20)) +
+  my_theme +
+  theme(axis.text.x = element_text(size = 8),
+        axis.title.y = element_blank(),
+        legend.position = c(0.5,0.8))
+```
+
+External source respondents seem to follow the JS respondents in the dynamics of category but for one difference; they have a higher interest in music-only content.
+
+<br>
+<br>
+
+```{r}
+ggplot(a <- d_dum %>% 
+         select(6:11) %>%
+         gather(var, val, 1:6) %>% 
+         mutate(var = gsub("\\.|\\.\\.", " ", var)) %>% 
+         arrange(desc(val)) %>% 
+         mutate(var = factor(var, levels = var))) +
+  geom_bar(aes(x = var,
+               y = val#,
+               #fill = as.factor(external)
+               ),
+           stat = "identity",
+           fill = "#1885a3",
+           position = "dodge") +
+  labs(title = "What else do you want in your American Songbook listening experience?",
+       fill = "Source",
+       x = "") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 20)) +
+  my_theme +
+  theme(axis.text.x = element_text(size = 8),
+        axis.title.y = element_blank(),
+        legend.position = c(0.6,0.8))
+```
+
+Where JS respondents seem to be mnore interested in songbook history and interviews, external-sourced listeners are, again, more interested in the music only.
+
+<br>
+<br>
+
+```{r}
+ggplot(a <- d_dum %>% 
+         select(12:16) %>%
+         gather(var, val, 1:5) %>% 
+         mutate(var = gsub("\\.|\\.\\.", " ", var)) %>% 
+         arrange(desc(val)) %>% 
+         mutate(var = factor(var, levels = var))) +
+  geom_bar(aes(x = var,
+               y = val#,
+               #fill = as.factor(external)
+               ),
+           stat = "identity",
+           fill = "#1885a3",
+           position = "dodge") +
+  labs(title = "What kinds of live events would you be interested in attending?",
+       fill = "Source",
+       x = "") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 20)) +
+  my_theme +
+  theme(axis.text.x = element_text(size = 8),
+        axis.title.y = element_blank(),
+        legend.position = c(0.5,0.8))
+```
+
+External-source respondents are not interested in events. JS sourced respondents are mostly interested in conversed performances. 
+
+<br>
+<br>
+<br>
+
+###Wordclouds. Q:Why do you listen to music from The American Songbook? Open Question Part
+
+####Monograms
+```{r}
+wcfromvector(d$other2, 100, grams = 1, maxscale = .8, minscale = 6)
+```
+
+
+...All about the music
+
+<br>
+<br>
+
+####Bigrams
+```{r}
+wcfromvector(d$other2, 100, grams = 2, maxscale = .4, minscale = 3)
+```
+
+
+People love the music and it's mostly about it, but people miss JS.
+
+<br>
+<br>
+<br>

@@ -1,0 +1,218 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+d <- fread("~/Documents/Podcast S1 Forecast/per day data/ondemand_clean.csv") %>% 
+  mutate(month_date = as.Date(paste("01-", month, sep = ""), format = "%d-%b-%Y")) %>%
+  filter(story_start_date >= as.Date("2016-03-01"))
+d[, grep("date", colnames(d))] <- lapply(d[, grep("date", colnames(d))],
+                                        function(x) as.Date(x, format = "%Y-%m-%d"))
+show_data_old <- read.csv("~/Documents/Podcast S1 Forecast/per day data/show_data_old.csv",header = F)
+show_data <- read.csv("~/Documents/Podcast S1 Forecast/per day data/show_data.csv")
+show_data_old$V1 <- trimws(gsub("-.*|[1,8,3].*|show", "", show_data_old$V1))
+show_data$show <- ifelse(show_data$show == "Radiolab Presents: More Perfect",
+                           "More Perfect", as.character(show_data$show))
+colnames(show_data_old) <- "show"
+show_data <- data.frame(show = c(show_data_old$show,
+               show_data[show_data$show %!in% show_data_old$show,]$show))
+```
+```{r}
+
+
+
+
+######################################
+# ELIMINATE BRIAN LEHRER
+# SEE WHAT HAPPENS
+#
+#
+#
+
+```
+
+
+```{r}
+a <- d %>% group_by(show) %>%
+  filter(story_start_date == min(story_start_date),
+         show %in% show_data$show) %>% 
+  summarise(ep = story[1])
+
+d <- d %>% filter(show %in% show_data$show,
+                  story %!in% a$ep) %>%
+  group_by(show, story) %>% 
+  mutate(story_start_date1 = min(date))
+```
+
+```{r}
+#
+temp <- d %>% group_by(show, story) %>% summarise(story_start_date = story_start_date[1],
+                                                  story_start_date1 = story_start_date1[1],
+                                                  timediff = difftime(story_start_date1, story_start_date),
+                                                  orig_dls = ifelse(sum(is.na(which(date == story_start_date[1]))), NA,
+                                                                    downloads[which(date == story_start_date[1])]),
+                                                  new_dls = downloads[which(date == story_start_date1[1])][1])
+
+b <- temp[temp$timediff != 0,]
+b$story_start_date_real <- if_else(is.na(b$orig_dls), b$story_start_date1,
+                                  b$story_start_date)
+
+d <- d %>%
+  left_join(b %>% select(show, story, story_start_date_real)) %>% 
+  mutate(story_start_date = as.Date(if_else(!is.na(story_start_date_real),
+                                   story_start_date_real,
+                                   story_start_date))) %>% 
+  select(-story_start_date_real)
+
+d$published_that_day <- ifelse(d$date == d$story_start_date, 1, 0)
+```
+
+
+```{r}
+d_eps_fit <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, story) %>%
+    filter(date <= story_start_date + 30) %>% 
+  summarise(story_start_date = story_start_date[1],
+            downloads = sum(downloads),
+            start_month = format(story_start_date, "%b-%Y"),
+            start_year = year(story_start_date),
+            start_week = week(story_start_date),
+            story_duration = story_duration[1] /60) %>%
+  arrange(show, story_start_date) %>% 
+  mutate(start_weekday = weekdays(story_start_date))
+
+d_eps_fit$start_weekday <- relevel(as.factor(d_eps_fit$start_weekday), "Monday")
+d_eps_fit$release_groups <- ifelse(d_eps_fit$start_weekday %in% c("Monday", "Tuesday", "Wednesday"), "mon-wed",
+                               ifelse(d_eps_fit$start_weekday %in% c("Thursday", "Friday"), "thu-fri", "sat-sun"))
+d_eps_fit$release_groups <- relevel(as.factor(d_eps_fit$release_groups), "mon-wed")
+d_eps_fit$release_month <- as.factor(month(d_eps_fit$story_start_date))
+d_eps_fit$start_year <- as.factor(d_eps_fit$start_year)
+```
+
+
+```{r}
+linear <- summary(lm(downloads~start_weekday + story_duration + as.factor(start_year) + release_month + show, data = d_eps_fit))
+linear
+```
+
+```{r}
+linear_inter <- summary(lm(downloads~ story_duration + as.factor(start_year) * release_month * start_weekday + show, data = d_eps_fit))
+linear_inter
+```
+
+
+#plot
+```{r, fig.height=9, fig.width=12}
+a <- as.data.frame(linear$coefficients)
+a$coef <- row.names(a)
+a <- a %>% filter(grepl(pattern = "start_weekday|release_month", x = coef))
+a$coef <- ifelse(grepl("start_weekday", a$coef),
+                 gsub("start_weekday", "", a$coef),
+                 month.abb[as.numeric(str_extract(a$coef, "[[:digit:]].*"))])
+a$coef
+colnames(a)[grep("Std.", colnames(a))] <- "error"
+
+```
+
+```{r}
+ggplot(a %>% filter(coef %in% month.abb[1:12]) %>% 
+         mutate(coef = factor(coef, levels = c(month.abb[12:2]) ))) +
+  labs(title = "Expected Effect of Episode Month of Release. January Base Category.",
+       x = "",
+      y = "Estimated Effect (First 30 Days Downloads)") + 
+  geom_hline(yintercept = 0,
+             color = "grey",
+             linetype = "dashed") +
+  geom_pointrange(aes(x = as.factor(coef),
+                      y = Estimate,
+                 ymin = Estimate - 1.96*error,
+                 ymax = Estimate + 1.96*error,
+                 color = ifelse(Estimate < 0, "#cc4b10", "#109dcc"))) +
+  scale_color_manual(values = c("#109dcc", "#cc4b10",  "#ccb910")) +
+  scale_y_continuous(breaks = seq(-20000, 10000, 5000),
+                     labels = scales::comma ) +
+  coord_flip() +
+  my_theme +
+  theme(legend.position = "nonce")
+  
+```
+
+```{r}
+ggplot(a %>% filter(coef %in% c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")) %>% 
+         mutate(coef = factor(coef, levels = rev(c("Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday") )))) +
+  labs(title = "Expected Effect of Episode Weekday of Release. Monday Base Category.",
+       x = "",
+       y = "Estimated Effect (First 30 Days Downloads)") + 
+  geom_hline(yintercept = 0,
+             color = "grey",
+             linetype = "dashed") +
+  geom_pointrange(aes(x = as.factor(coef),
+                      y = Estimate,
+                 ymin = Estimate - 1.96*error,
+                 ymax = Estimate + 1.96*error,
+                 color = ifelse(Estimate < 0, "#cc4b10", "#109dcc"))) +
+  scale_color_manual(values = c("#109dcc", "#cc4b10",  "#ccb910")) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = seq(-50000, 20000, 10000)) +
+  coord_flip() +
+  my_theme +
+  theme(legend.position = "nonce")
+  
+```
+
+
+
+```{r}
+ggplot(d_eps_fit %>% 
+         mutate(release_month = factor(month.abb[release_month],
+                                       levels = c(month.abb[1:12]) ))) +
+  labs(title = "Episode Downloads by Month of Release",
+       x = "") + 
+  geom_jitter(aes(x = release_month,
+                  y = downloads,
+                  color = start_month),
+              size = 0.4) +
+  geom_boxplot(aes(x = release_month,
+                  y = downloads,
+                  color = release_month)) +
+  scale_y_continuous(labels = scales::comma) +
+  coord_polar() +
+  my_theme +
+  theme(legend.position = "nonce")
+```
+
+
+
+
+
+
+
+```{r}
+ggplotly(ggplot(d_eps_fit) +
+  geom_jitter(aes(x = start_weekday,
+                  y = downloads,
+                  color = show),
+              size = 0.3) +
+  my_theme +
+    theme(legend.position = "none"))
+  
+```
+
+```{r}
+ggplotly(ggplot(d_eps_fit %>% 
+                  mutate(start_month = factor(start_month, levels = d_eps_fit %>%
+                                                group_by(start_year, release_month) %>%
+                                                arrange(desc(start_year), desc(release_month)) %>% 
+                                                summarise(mo = start_month[1]) %>% 
+                                                pull(mo)))) +
+  geom_jitter(aes(x = start_month,
+                  y = downloads,
+                  color = show),
+              size = 0.3) +
+  my_theme +
+    theme(legend.position = "none",
+          axis.text.x = element_text(angle = 90)))
+
+```
+

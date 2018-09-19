@@ -1,0 +1,32 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+```
+ 
+
+```{r}
+d <- read.csv("ttaway.csv")
+d$first_publish_date <- as.Date(d$first_publish_date)
+d2 <- read.csv("else.csv")
+d2 <- d2[-1,]
+colnames(d2) <- c("story","show","first_publish_date","downloads")
+d2$downloads <- as.numeric(as.character(d2$downloads))
+b <- d2 %>% filter(show == "On The Media")
+d2 <- d2 %>% filter(show != "On The Media")
+
+a <- d %>% group_by(first_publish_date) %>% slice(which.max(downloads))
+b <- b %>% group_by(first_publish_date) %>% slice(which.max(downloads))
+
+d <- bind_rows(a %>% ungroup %>% select(-first_publish_date),
+               b %>% ungroup %>% select(-first_publish_date),
+               d2 %>% ungroup %>% select(-first_publish_date))
+
+
+total <- d %>% group_by(show) %>% summarise(avg = mean(downloads)) %>% arrange(desc(avg))
+write.csv(total, "ranking.csv")
+```
+

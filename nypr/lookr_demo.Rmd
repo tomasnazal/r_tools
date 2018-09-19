@@ -1,0 +1,16 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(lookr)
+```
+
+```{r}
+looker_setup(id = "DRgNrkk98vRqCXfHbsKC",
+             secret = "v5f6jTs5W4tSqkYc3vPDvMxpoh",
+             api_path = "https://nypr.looker.com:19999/api/3.0"
+)
+```
+

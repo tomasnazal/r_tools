@@ -1,0 +1,173 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(data.table)
+library(stringr)
+library(mytools)
+```
+
+```{r}
+d <- fread("studios_ep_day.csv")
+colnames(d) <- c("show", "story", "publish_date", "episode_length", "download_date", "listeners", "downloads")
+d <- as.data.frame(d)
+d[,c(grep("date", colnames(d)))] <- lapply(d[,c(grep("date", colnames(d)))],
+                                                function(x) as.Date(x))
+
+```
+
+```{r}
+#get correct story start dates
+d <- d %>%
+  group_by(show, story) %>% 
+  mutate(story_start_date1 = min(download_date))
+
+
+#real Story start date
+temp <- d %>% group_by(show, story) %>%
+  summarise(n_sdates = n_distinct(publish_date),
+            publish_date = min(publish_date),
+            story_start_date1 = min(story_start_date1),
+            timediff = difftime(story_start_date1, publish_date),
+            orig_dls = ifelse(length(which(download_date == min(publish_date))) == 0, NA,
+                              downloads[which(download_date == min(publish_date))]),
+            new_dls = downloads[which(download_date == story_start_date1[1])][1]) %>%
+  mutate(story_start_date_real =  if_else(is.na(orig_dls) | n_sdates > 1, story_start_date1,
+                                  publish_date)) %>% 
+  filter(timediff != 0 |
+         n_sdates > 1)
+
+d <- d %>%
+  left_join(temp %>% select(show, story, story_start_date_real)) %>% 
+  mutate(publish_date = as.Date(if_else(!is.na(story_start_date_real),
+                                   story_start_date_real,
+                                   publish_date))) %>% 
+  select(-story_start_date_real,
+         story_start_date1 )
+rm(temp)
+```
+
+```{r}
+#Natural day attrition 
+d_show_ep_day <- d %>% 
+  filter(publish_date >= min(download_date)) %>% 
+  group_by(show, story, download_date) %>% 
+  summarise(downloads = sum(downloads)) %>%
+  arrange(download_date) %>% 
+  ungroup() %>% 
+  group_by(show, story) %>% 
+  mutate(day_n = row_number(),
+         dwld_perc = round((downloads / sum(downloads)) * 100, 2))
+
+d_show_ep_day <- d_show_ep_day %>% arrange(show, story, day_n)
+
+
+#summed total downloads and devided to find a percentage witihin a year
+attrition <- d_show_ep_day %>% group_by(day_n) %>% 
+  summarise(min = min(dwld_perc),
+            mean = mean(dwld_perc),
+            median = median(dwld_perc),
+            max = max(dwld_perc),
+            all = sum(downloads)) %>%
+  slice(1:366) %>% 
+  mutate(perc = round((all / sum(all)),5))
+
+vector_for_export <- pull(attrition, perc)
+vector_for_export <- as.data.frame(vector_for_export)
+
+
+temp3 <- d_show_ep_day %>% group_by(day_n) %>% 
+  summarise(avg_perc = mean(dwld_perc))
+
+ggplot(temp3) +
+  labs(title = "Natural Episode Attrition",
+       x = "Month Number",
+       y = "Percentage of Downloads") +
+  geom_point(aes(x = day_n,
+                y = avg_perc)) +
+  geom_line(aes(x = day_n,
+                y = avg_perc)) +
+  geom_text(aes(x = day_n,
+                y = avg_perc,
+                label = paste(round(avg_perc, 1), "%", sep = "")),
+            nudge_x = 0.5,
+            nudge_y = 1.7,
+            size = 2.4)+
+  my_theme
+
+```
+
+
+
+```{r}
+#first season
+d_ep <- d %>% group_by(show, story) %>% 
+          summarise(publish_date = publish_date[1],
+            episode_length = episode_length[1],
+            listeners = sum(listeners),
+            downloads = sum(downloads),
+            date_extracted = Sys.Date(),
+            days_since_publishing = Sys.Date() - publish_date)
+d_ep <- d_ep %>% arrange(show, publish_date) %>% 
+  mutate(story = factor(story, levels = story))
+```
+
+```{r}
+d_ep_tr <- d_ep %>% filter(
+  (show == "More Perfect" & publish_date < "2016-09-01") |
+  (show == "Stay Tuned with Preet" & publish_date < "2017-12-25") |
+  (show == "Sooo Many White Guys" & publish_date < "2016-10-25")  |
+  (show == "Snap Judgment Presents: Spooked" & publish_date < "2017-11-25")  |
+  (show == "2 Dope Queens" & publish_date < "2016-09-19")  |
+  (show == "The United States of Anxiety" & publish_date < "2016-12-19")  |
+  (show == "Nancy" & publish_date < "2017-08-05")  |
+  (show %!in% c("More Perfect", "Stay Tuned with Preet",
+                "Sooo Many White Guys", "Snap Judgment Presents: Spooked",
+                "2 Dope Queens", "The United States of Anxiety",
+                "Nancy"))  
+)
+
+write.csv(d_ep_tr, "clean.csv")
+
+```
+
+
+
+
+
+
+
+```{r}
+for(i in unique(d_ep$show)){
+  print(
+    ggplot(d_ep_tr %>% filter(show == i))+
+  labs(title = i)+
+      geom_bar(aes(x = publish_date,
+                   y = downloads),
+               stat = "identity") +
+      my_theme
+  )
+  
+}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

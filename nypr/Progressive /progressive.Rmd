@@ -1,0 +1,29 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+
+
+```{r}
+#read data
+d <- fread("progressive.csv")
+```
+
+```{r, fig.height= 15}
+ggplot(d) +
+  geom_bar(aes(x = placement_name)) +
+  facet_wrap(~goal_name,nrow = 5) +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+```{r}
+d$is_mobile <- ifelse(grepl("mobile|Mobile", d$conv_user_agent), 1, 0)
+
+table(d[d$goal_name %in% c("quote_complete", "hi_quote_complete"),]$is_mobile) / nrow(d[d$goal_name %in% c("quote_complete", "hi_quote_complete"),]) * 100
+```
+
+

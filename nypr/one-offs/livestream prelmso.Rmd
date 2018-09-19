@@ -1,0 +1,54 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(mytools)
+```
+
+```{r}
+d <- fread("/Users/tnazal/Downloads/others.csv")
+#d <- as.data.frame(d)
+#d_sample <- sample_n(d, 1000)
+d_cols <- c(grep("start_time|end_time", colnames(d)))
+#d[, (d_cols) := lapply(.SD, function(x) as.POSIXct(x, format = "%Y-%m-%d")), .SDcols = d_cols]
+
+for(j in d_cols) set(d, j=j, value = as.POSIXct(d[[j]], format = "%Y-%m-%d"))
+lapply(d, class)
+```
+
+```{r}
+summary(d$session_end_time)
+```
+
+```{r}
+ggplot(d) +
+  geom_density(aes(x = session_start_time)) +
+  my_theme
+
+```
+
+```{r}
+ggplot(d) +
+  geom_density(aes(x = session_end_time)) +
+  my_theme
+```
+
+```{r}
+colnames(d)
+```
+
+
+
+```{r}
+ggplot(d) +
+  geom_density(aes(x = session_seconds_listened)) +
+  my_theme
+
+summary(d$session_seconds_listened)
+```

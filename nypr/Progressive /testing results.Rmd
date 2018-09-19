@@ -1,0 +1,87 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+```
+
+
+```{r}
+validations <- function(sample_treat, sample_not = sample_treat,
+                        treat_success, not_success){
+  #simulate data
+  datas <- data.frame(treatment = c(rep("treatment",sample_treat),
+                                    rep("not",sample_not)),
+                          conversion = c(rep(1, treat_success),
+                                         rep(0, sample_treat - treat_success),
+                                         rep(1, not_success),
+                                         rep(0, sample_not - not_success)))
+  #datas <- sample_n(datas, nrow(datas))
+  
+  #run tests
+  chisq <- prop.test(table(datas$conversion, datas$treatment)) #chi squared
+  ttest <- t.test(datas[datas$treatment == "treatment",]$conversion,
+       datas[datas$treatment == "not",]$conversion) # t-test
+  wilcox <- wilcox.test(conversion~treatment, data = datas) #Mann-Whitney-Wilcox 
+  
+  #print signifficance at 95%
+  print(paste("Proportion test (chi) sig < 0.05 = ",  chisq$p.value < 0.05))
+  print(paste("t-test sig < 0.05 =",  ttest$p.value < 0.05))
+  print(paste("wilcox test sig < 0.05 =",  wilcox$p.value < 0.05))
+  #return(datas)
+                        }
+```
+
+#check Eurry's
+##landing
+```{r}
+validations(332104, 332104, 3210, 2165) #Both
+validations(392311, 392311, 1559, 1162) #Freakonomics
+validations(518150, 518150, 1722, 1116) #Radiolab
+```
+
+##quote_start
+```{r}
+validations(332104, 332104, 2115, 1574) #Both
+validations(392311, 392311, 981, 781) #Freakonomics
+validations(518150, 518150, 1092, 746) #Radiolab
+```
+
+##quote_complete
+```{r}
+validations(332104, 332104, 1380, 909) #Both
+validations(392311, 392311, 649, 529) #Freakonomics
+validations(518150, 518150, 691, 471) #Radiolab
+```
+
+#Pooled differences
+##Inflated
+```{r}
+validations(1242565, 1242565, 6491, 4443) #Landing
+validations(1242565, 1242565, 4188, 3101) #Q_start
+validations(1242565, 1242565, 2720, 1909) #Q_complete
+```
+
+```{r}
+validations(1242565, 584877, 6491, 1688) #Landing
+validations(1242565, 584877, 4188, 1124) #Q_start
+validations(1242565, 584877, 2720, 710) #Q_complete
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

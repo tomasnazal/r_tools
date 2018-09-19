@@ -1,0 +1,66 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(stringr)
+library(data.table)
+```
+
+```{r}
+d <- fread("ids.csv")
+colnames(d) <- c("ipua", "cookie", "timestamp")
+d$cookie <- ifelse(d$cookie == "", "empty", as.character(d$cookie))
+d$timestamp <- as.Date(str_extract(d$timestamp, "^.{4}-.{2}-.{2}"))
+
+length(d %>% filter(cookie == "empty") %>% pull(cookie)) / length(d$cookie)
+```
+
+```{r}
+du <- d %>% filter(cookie != "empty") %>% group_by(timestamp, cookie, ipua) %>% summarise()
+
+cookie_count_day <- du %>% group_by(timestamp, cookie) %>% summarise(n = n_distinct(ipua))
+cookie_count_week <- du %>% group_by(week(timestamp), cookie) %>% summarise(n = n_distinct(ipua))
+cookie_count_month <- du %>% group_by(month(timestamp), cookie) %>% summarise(n = n_distinct(ipua))
+
+ipua_count_day <- du %>% group_by(timestamp, ipua) %>% summarise(n = n_distinct(cookie))
+ipua_count_week <- du %>% group_by(week(timestamp), ipua) %>% summarise(n = n_distinct(cookie))
+ipua_count_month <- du %>% group_by(month(timestamp), ipua) %>% summarise(n = n_distinct(cookie))
+
+
+count_day <- du %>% group_by(timestamp) %>% summarise(ipua = n_distinct(ipua),
+                                                      cookies = n_distinct(cookie),
+                                                      prop = cookies / ipua)
+count_week <- du %>% group_by(week(timestamp)) %>% summarise(ipua = n_distinct(ipua),
+                                                      cookies = n_distinct(cookie),
+                                                      prop = cookies / ipua)
+count_month <- du %>% group_by(month(timestamp)) %>% summarise(ipua = n_distinct(ipua),
+                                                      cookies = n_distinct(cookie),
+                                                      prop = cookies / ipua)
+```
+
+```{r}
+n_distinct(du$cookie)/n_distinct(du$ipua)
+```
+
+
+
+```{r}
+# comp <- data_frame()
+# counter <- 1
+# for(i in ls()[grep("count", ls())]){
+#   g <- get(i)
+#   comp[counter, "set"] <- i
+#   com[counter, "prop"] <- n_distinct(g$)
+# }
+
+
+for(i in ls()[grep("count", ls())]){
+  print(ggplot(get(i) %>% filter(n > 1)) +
+          labs(title = i) +
+     geom_histogram(aes(x = n),
+                    binwidth = 1) +
+     my_theme)
+}
+```
+

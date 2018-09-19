@@ -1,0 +1,71 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+#load Packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+library(lubridate)
+library(zoo)
+library(purrr)
+library(gtools)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+
+```
+
+
+```{r}
+#Functions
+
+##0-1 normalization 
+scalar1 <- function(x) {x / sqrt(sum(x^2))}
+
+#not in
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+```
+
+
+```{r}
+#read data
+####################################################################
+####You need some of the sets created on PodForecastEpisodes.rmd####
+####################################################################
+apple <- read.csv("apple.csv")
+apple$date_index <- as.Date(apple$date_index)
+apple_agg <- apple %>% 
+  group_by(date_index) %>%
+  summarise(auto = sum(auto, na.rm = T),
+            manual = sum(manual, na.rm = T),
+            streams = sum(streams, na.rm = T))
+
+
+
+apple_agg <- apple_agg %>% gather(var, n, 2:4)
+apple_agg <- apple_agg %>% group_by()
+
+
+ggplot(apple_agg) +
+  geom_line(aes(x = date_index,
+                y = n,
+                color = var)) +
+  my_theme
+```
+
+
+```{r}
+
+```
+

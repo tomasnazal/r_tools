@@ -1,0 +1,61 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+d <- read.csv("mailchimp_crm_overlap.csv")
+d_notin <- read.csv("not_in.csv")
+```
+
+```{r}
+grap <- d %>% filter(distincts_mailchimp > 100,
+                     prop < 95,
+                     !grepl("Do Not Send", list),
+                     !grepl("Member", list),
+                        !grepl("This Week", list),
+                        !grepl("WQXR Daily", list),
+                        !grepl("HIATUS", list),
+                        !grepl("Archive List", list))
+
+
+
+newslet <- d %>% filter(grepl("Newsletter", list),
+                        !grepl("Member", list),
+                        !grepl("This Week", list),
+                        !grepl("WQXR Daily", list))
+```
+
+```{r, fig.height=6}
+ggplot(grap %>% 
+         arrange(desc(prop)) %>% 
+         slice(1:15) %>%
+         arrange(prop) %>% 
+         mutate(list = factor(list, levels = list)),
+       aes(x = list)) +
+  geom_bar(aes(y = prop),
+           stat = "identity") +
+  coord_flip() +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 20)) +
+  my_theme
+```
+
+```{r}
+ggplot(newslet %>% 
+         arrange(prop) %>% 
+         mutate(list = factor(list, levels = list)),
+       aes(x = list)) +
+  geom_bar(aes(y = distincts_mailchimp),
+           stat = "identity",
+           fill = "#ce2e12") +
+  geom_bar(aes(y = in_crm),
+           fill = "#115ace",
+           stat = "identity") +
+  geom_text(aes(y = distincts_mailchimp,
+                label = paste0(prop, "%")),
+            hjust = -0.1,
+            size = 3) +
+  coord_flip() +
+  
+  my_theme
+```

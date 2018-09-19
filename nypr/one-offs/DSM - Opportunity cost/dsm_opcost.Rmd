@@ -1,0 +1,48 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+dsm <- read.csv("dsm_op.csv")
+dsm$date <- as.Date(dsm$date, format = "%m/%d/%y")
+dsm$week <- week(dsm$date)
+
+
+ep_week <- dsm %>% arrange(date) %>% 
+  group_by(story, week) %>% 
+  summarise(indicator = date[1],
+            downloads = sum(downloads),
+            listeners = sum(listeners)) %>% 
+  ungroup() %>% 
+  arrange(story, week)
+
+just_week <- dsm %>% arrange(date) %>% 
+  group_by(week) %>% 
+  summarise(indicator = date[1],
+            downloads = sum(downloads),
+            listeners = sum(listeners)) %>% 
+  ungroup()
+
+just_week <- gather(just_week, var, n, 3:4)
+ep_week <- gather(ep_week, var, n, 4:5)
+```
+
+
+```{r}
+ggplot(just_week) +
+  geom_line(aes(x = indicator,
+                y = n,
+                color = var)) +
+  coord_cartesian(ylim = c(0, max(just_week$n))) +
+  my_theme
+```
+
+```{r}
+ggplot(ep_week %>% filter(var == "downloads" )) +
+  geom_line(aes(x = week,
+                y = n,
+                color = story)) +
+  coord_cartesian(ylim = c(0, max(ep_week$n))) +
+  my_theme
+```

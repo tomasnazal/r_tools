@@ -1,0 +1,605 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+library(lubridate)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+
+#functions
+##Not in
+'%!in%' <- function(x,y) !('%in%'(x,y))
+
+##Financial Year
+fy <- function(vector){
+  ifelse(vector >
+           as.Date(paste(year(vector),
+                         "06","30", sep = "-")),
+         year(vector + 365),
+         year(vector))
+}
+```
+
+#Read Data
+```{r}
+d <- fread("payments.csv") %>% 
+  mutate(payment_date = as.Date(payment_date))
+d_group_2017 <- d %>%
+  filter(year(payment_date) < 2018) %>% 
+  group_by(nf_customer_key) %>% 
+  summarise(start = min(payment_date))
+
+d$payment_date = as.Date(d$payment_date)
+d$year <- year(d$payment_date)
+d$fyear <- fy(d$payment_date)
+d$churners2017 <- ifelse((d$nf_customer_key %in% 
+                           d[d$year == 2016,]$nf_customer_key) &
+                         (d$nf_customer_key %!in% 
+                           d[d$year == 2017,]$nf_customer_key), 1, 0)
+d$month_year <- paste(month(d$payment_date), d$year, sep = "_")
+
+```
+
+```{r}
+#2017 new
+n_distinct(d_group_2017[year(d_group_2017$start) == 2017,]$nf_customer_key)/
+n_distinct(d[d$year == 2016,]$nf_customer_key)
+```
+
+```{r}
+n_distinct(d[d$churners2017 == 1,]$nf_customer_key)/
+n_distinct(d[d$year == 2016,]$nf_customer_key)
+```
+
+
+```{r}
+a <- d %>%
+  filter(year %in% c(2016,2017)) %>%
+  group_by(nf_customer_key, year) %>% 
+  summarise(total = sum(payment_amount))
+
+a$churners2017 <- ifelse(a$nf_customer_key%!in% 
+                           a[a$year == 2017,]$nf_customer_key, 1, 0)
+
+b <- a %>% filter(year == 2016)
+b <- b %>% filter(total <= 132)
+b$churners2017 <- ifelse(b$churners2017 == 1,
+                         "didn't give in 2017",
+                         "gave in 2017")
+```
+
+#Length of giving
+```{r}
+#Aggregate data at the customer/month level
+d_people <- d %>%
+  group_by(month_year,
+           nf_customer_key) %>%
+  summarise(n = length(month_year))
+#summarise total number of months per user
+d_people_months <- d_people %>% 
+  ungroup() %>% 
+  group_by(nf_customer_key) %>% 
+  summarise(n_months = n_distinct(month_year),
+            n_payments = length(nf_customer_key))
+
+
+#n of consecutive months
+
+##Count the months availabale in integer sequence 
+ordered_months <- d %>% group_by(month_year) %>% 
+  summarise(month_year_date = min(payment_date)) %>%
+  ungroup() %>% 
+  arrange(month_year_date) %>% 
+  mutate(month_n = row_number())
+##left join month total integer number to aggregate
+d_people <- d_people %>%
+  left_join(ordered_months %>%
+              select(-month_year_date))
+#if consecutive (diff of 1) then T, creates groups, then rleid count groups of the same
+d_people <- d_people %>% 
+  group_by(nf_customer_key) %>% 
+  arrange(nf_customer_key, month_n) %>% 
+  mutate(conceq_months = c(T,diff(month_n) == 1),
+         conceq_months = ifelse(sum(conceq_months) == 1, F, conceq_months),
+         conseq_group = rleid(conceq_months))
+#when removing non consecutives you can group by the distinct group and count the length
+d_people_conseq <- d_people %>%
+  filter(conceq_months == 1) %>% #1 == TRUE
+  group_by(nf_customer_key,
+           conseq_group) %>% 
+  summarise(conseq_length = (length(conseq_group)))
+
+#variable for if the customer key was ever sustaining
+d_people_months$ever_sustained <- ifelse(d_people_months$nf_customer_key %in% d_people_conseq$nf_customer_key,
+                                  "Sustainer", "One Time")
+
+
+```
+
+##Number of distinct months
+```{r}
+summary(d_people_months$n_months)
+summary(d_people_months[d_people_months$ever_sustained == "Sustainer", ]$n_months)
+summary(d_people_months[d_people_months$ever_sustained != "Sustainer", ]$n_months)
+summary(d_people_months[d_people_months$ever_sustained == "Sustainer", ]$n_payments)
+summary(d_people_months[d_people_months$ever_sustained != "Sustainer", ]$n_payments)
+```
+##Number of consecutive months
+```{r}
+summary(d_people_conseq$conseq_length)
+```
+
+##Number of consecutive months (>1)
+```{r}
+summary(d_people_conseq$conseq_length)
+```
+
+#LTV and lifetime for sustaining/one time
+```{r}
+d$ever_sustained <- ifelse(d$nf_customer_key %in% d_people_conseq$nf_customer_key, 1, 0)
+d_ltv <- d %>% 
+  group_by(nf_customer_key) %>% 
+  summarise(ltv = sum(payment_amount),
+            ever_sustained = ever_sustained[1],
+            lt = n_distinct(month_year))
+
+d_ltv_pyear <- d %>% 
+  group_by(nf_customer_key, fyear) %>% 
+  summarise(ltv = sum(payment_amount),
+            ever_sustained = ever_sustained[1],
+            lt = n_distinct(month_year))
+
+d_ltv_pyear_single$ever_sustained <- ifelse(d_ltv_pyear_single$ever_sustained == 1,
+                                     "Sustainer",
+                                     "One Time")
+
+d_ltv_pyear_single <- d %>% 
+  group_by(fyear, ever_sustained) %>% 
+  summarise(ltv = sum(payment_amount),
+            avg_payment = mean(payment_amount),
+            median_payment = median(payment_amount))
+d_ltv$ever_sustained <- ifelse(d_ltv$ever_sustained == 1,
+                                     "Sustainer",
+                                     "One Time")
+```
+
+##calculations
+```{r}
+d_ltv %>% group_by(ever_sustained) %>% summarise(med_ltv = median(ltv),
+                                                 med_lt = median(lt))
+```
+##Graphs
+```{r}
+ggplot(d_ltv %>% filter(ltv < 500)) +
+  labs(title = "Distribution of LTV by Type of Donor",
+       fill = "Type of Donor",
+       y = "") +
+  geom_density(aes(x = ltv,
+                   fill = as.factor(ever_sustained)),
+               alpha = 0.5) +
+  scale_fill_manual(values = c("#109dcc", "#cc4b10", "#ccb910")) +
+  my_theme +
+  theme(legend.position = c(0.7,0.7))
+```
+
+
+```{r}
+ggplot(data = d_ltv_pyear_single,
+       aes(x = fyear,
+           y = avg_payment,
+           color = as.factor(ever_sustained))) +
+  labs(title = "Sustainer and One-Time Donors Average Payment. FY2010-FY2017.",
+       x = "",
+       y = "",
+       color = "") +
+  geom_point(size = 1.8) +
+  geom_line(size = 1.3) +
+  geom_text(aes(group = ever_sustained,
+                label = round(avg_payment, 2)),nudge_y = 5
+                ) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_continuous(limits = c(2013,2017),
+                     breaks = 2013:2017,
+                     labels = paste("FY", 13:17, sep = "")) +
+  scale_color_manual(values = c("#109dcc", "#cc4b10", "#ccb910")) +
+  my_theme +
+  theme(legend.position = c(0.77, 0.7),
+        legend.key = element_blank())
+```
+
+```{r}
+ggplot(data = d_ltv_pyear_single,
+       aes(x = fyear,
+           y = ltv,
+           color = as.factor(ever_sustained))) +
+  labs(title = "Sustainer and One-Time Donors Total Payment. FY2010-FY2017.",
+       x = "",
+       y = "",
+       color = "") +
+  geom_point(size = 1.8) +
+  geom_line(size = 1.3) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_continuous(limits = c(2013,2017),
+                     breaks = 2013:2017,
+                     labels = paste("FY", 13:17, sep = "")) +
+  scale_color_manual(values = c("#109dcc", "#cc4b10", "#ccb910")) +
+  my_theme +
+  theme(legend.position = c(0.87, 0.33),
+        legend.key = element_blank())
+```
+
+
+
+```{r}
+p_ltv_year <- ggplot(d_ltv_pyear %>%
+                       filter(fyear %!in% c(2008, 2018),
+                              ltv < 200),
+                     aes(x = ltv,
+                         fill = as.factor(ever_sustained),
+                         frame = as.factor(fyear))) +
+  labs(title = "Distribution of Year Total Value by Donor Type. FY:",
+       x = "Year Total Value",
+       fill = "Donor Type") +
+  geom_density(alpha = 0.5) +
+  my_theme + 
+  theme(legend.position = "top")
+
+
+gganimate::gganimate(p_ltv_year, filename = "hello.gif")  
+```
+
+
+#has the ltv increased or decreased over time?
+```{r}
+#forloop filters whole data up to increasing year i and calculates ltv
+ltv_p_year <- data.frame(guide = rep(NA, length(unique(d$year))))
+for(i in 1:length(unique(d$year))){
+  ltv_p_year$year[i] <- unique(d$year)[i]
+  temp <- d %>%
+    filter(year <= unique(d$year)[i]) %>% 
+    group_by(nf_customer_key) %>% 
+    summarise(ltv = sum(payment_amount))
+  ltv_p_year$ltv_med[i] <- median(temp$ltv)
+  ltv_p_year$ltv_mean[i] <- mean(temp$ltv)
+  ltv_p_year$cum_n_keys[i] <- n_distinct(temp$nf_customer_key)
+
+}
+ltv_p_year$guide <- NULL
+ltv_p_year <- arrange(ltv_p_year, year)
+
+
+```
+
+```{r}
+ggplot(ltv_p_year %>%
+         gather(var, val, 2:3) %>% 
+         mutate(var = ifelse(var =="ltv_mean",
+                             "mean",
+                             "median")),
+       aes(x = year,
+                y = val,
+                color = var)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~var, nrow = 2,
+             scales = "free_y") +
+  scale_x_continuous(breaks = c(unique(ltv_p_year$year))) +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+```{r}
+ggplot(ltv_p_year,
+       aes(x = year,
+           y = ltv_med)) +
+  geom_line(color = "#188a99") +
+  geom_point(color = "#188a99") +
+  scale_x_continuous(breaks = c(unique(ltv_p_year$year))) +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+```{r}
+ggplot(b) +
+  labs(title = "Distribution of Total Giving by Donors in 2016. By 2017 Sustained Contribution. \n First 3 Quartiles.",
+       fill = "") +
+  geom_density(aes(x = total,
+                   fill = as.factor(churners2017)),
+               alpha = 0.5,
+               color = "white") +
+  my_theme +
+  theme(legend.position = c(0.5,0.8),
+        legend.direction = "horizontal",
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text.y = element_blank())
+```
+
+
+```{r}
+c <- d %>%
+  filter(year(payment_date) < 2018) %>% 
+  group_by(nf_customer_key) %>% 
+  summarise(start = min(payment_date)) %>% 
+  mutate((first2017 = ifelse(start >=  as.Date('2017-01-01'),
+                             "First Donation in 2017",
+                             "First Donation < 2017"))) %>% 
+  ungroup() %>% 
+  group_by(nf_customer_key, year) %>% 
+  summarise(total = sum(payment_amount),
+            first2017 = first2017[1])
+
+```
+
+
+
+```{r}
+
+ggplot(c %>% filter(year == 2017, total <= 140)) +
+  labs(title = "Distribution of Total Giving by Donors in 2017. By 2017 First Donation. \n First 3 Quartiles",
+       fill = "") +
+  geom_density(aes(x = total,
+                   fill = as.factor(first2017)),
+               alpha = 0.5,
+               color = "white") +
+  my_theme +
+  theme(legend.position = c(0.5,0.8),
+        legend.direction = "horizontal",
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text.y = element_blank())
+```
+
+
+```{r}
+ggplot(d %>% filter(year == 2017) %>%
+         mutate(week = week(payment_date)) %>% 
+         group_by(week) %>% 
+         summarise(payment_date = min(payment_date),
+                   n_donors = n_distinct(nf_customer_key),
+                   median_pay = median(payment_amount))) +
+  geom_vline(aes(xintercept = payment_date),
+             linetype = "dashed",
+             color = "grey") +
+  geom_point(aes(x = payment_date,
+                 y = n_donors,
+                 size = median_pay),
+             shape = 21,
+             fill = "#76e2d8",
+             color = "black",
+             alpha = 0.5) +
+  #scale_y_continuous(limits = c(0,3000)) +
+  my_theme
+```
+
+```{r}
+ggplot(d %>% filter(year == 2017) %>%
+         mutate(week = week(payment_date)) %>% 
+         group_by(week) %>% 
+         summarise(payment_date = min(payment_date),
+                   n_donors = n_distinct(nf_customer_key),
+                   median_pay = median(payment_amount)) %>% 
+         filter(n_donors < 27000)) +
+  geom_vline(aes(xintercept = payment_date),
+             linetype = "dashed",
+             color = "grey") +
+  geom_point(aes(x = payment_date,
+                 y = n_donors,
+                 size = median_pay),
+             shape = 21,
+             fill = "#76e2d8",
+             color = "black",
+             alpha = 0.5) +
+  #scale_y_continuous(limits = c(0,3000)) +
+  my_theme
+```
+
+```{r}
+ggplot(d) +
+  geom_line(aes(x = payment_date,
+                y = payment_amount,
+                group = nf_customer_key),
+            color = "grey") +
+  my_theme
+```
+
+
+#Payment Distributions
+```{r}
+summary(d$payment_amount)
+```
+
+```{r}
+summary(d_group$payment_avg)
+```
+
+```{r}
+summary(d_group$ltv)
+```
+
+```{r}
+ggplot(d) +
+  labs(title = "Distribution of Unique Paymment Ammounts") +
+  geom_density(aes(x = payment_amount)) +
+  my_theme
+```
+
+```{r}
+ggplot(d_group) +
+  labs(title = "Distribution of Donor Average Paymment Ammounts") +
+  geom_density(aes(x = payment_avg)) +
+  my_theme
+```
+
+```{r}
+ggplot(d %>% filter(payment_amount < quantile(d$payment_amount, 0.75))) +
+  labs(title = "Distribution of Unique Paymment Ammounts. First 3 Quartiles") +
+  geom_density(aes(x = payment_amount),
+               fill ="#8ab4f7") +
+  my_theme
+```
+
+```{r}
+ggplot(d_group %>% filter(payment_avg < quantile(d_group$payment_avg, 0.75))) +
+  labs(title = "Distribution of Unique Paymment Ammounts. Donor Average. First 3 Quartiles") +
+  geom_density(aes(x = payment_avg),
+               fill ="#8ab4f7") +
+  my_theme
+```
+
+```{r}
+ggplot(d_group%>% filter(ltv < quantile(d_group$ltv, 0.75))) +
+  labs(title = "Distribution of LTV. First 3 Quartiles") +
+  geom_density(aes(x = ltv),
+               fill = "#6bd7e5",
+               color = "#3b8e99") +
+  my_theme +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks = element_blank())
+```
+
+#Time Series
+```{r}
+d_date <- d %>%
+  group_by(payment_date) %>%
+  summarise(dollars = sum(payment_amount),
+            people = n_distinct(nf_customer_key))
+```
+
+```{r}
+ggplot(d_date %>%
+         gather(variable, value, 2:3),
+       aes(x = payment_date,
+           y = value,
+           color = variable)) +
+  geom_line() +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_date(date_breaks = "years",
+               date_labels = "%Y"
+               ) +
+  facet_wrap(~variable,
+             nrow = 2, scales = "free_y") +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+```{r}
+ggplot(a <- d_date %>%
+         mutate(month = month(payment_date),
+                year = year(payment_date)) %>% 
+         group_by(year,month) %>% 
+         mutate(date = min(payment_date)) %>% 
+         ungroup() %>% 
+         group_by(date) %>% 
+         summarise(dollars = sum(dollars),
+                   people = sum(people)) %>% 
+         ungroup %>% 
+         gather(variable, value, 2:3),
+       aes(x = date,
+           y = value,
+           color = variable)) +
+  geom_line() +
+  stat_smooth(size = 0.3) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_date(date_breaks = "years",
+               date_labels = "%Y") +
+  facet_wrap(~variable,
+             nrow = 2, scales = "free_y") +
+  my_theme +
+  theme(legend.position = "none",
+        panel.grid.major.y = element_line(size = 0.1,linetype = "dashed"))
+```
+
+```{r}
+ggplot(a <- d_date %>%
+         mutate(month = month(payment_date),
+                year = year(payment_date)) %>% 
+         group_by(year,month) %>% 
+         mutate(date = min(payment_date)) %>% 
+         ungroup() %>% 
+         group_by(date) %>% 
+         summarise(dollars = sum(dollars),
+                   people = sum(people)) %>%
+         ungroup() %>% 
+         mutate(dollars = normalize_scalar1(dollars),
+                people = normalize_scalar1(people)) %>%
+         gather(variable, value, 2:3),
+       aes(x = date,
+           y = value,
+           color = variable)) +
+  geom_line() +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_date(date_breaks = "years",
+               date_labels = "%Y") +
+  my_theme
+```
+
+##Financial year / New metrics / Whole Series
+
+```{r}
+d_start_date <- d %>% group_by(nf_customer_key) %>% summarise(start_date = min(payment_date),
+                                                              start_year = fy(start_date))
+```
+
+```{r}
+year_uniques <- data.frame(rep(NA, length(unique(d$fyear))))
+for(i in 1:length(unique(d$fyear))){
+  year <- unique(d$fyear)[i]
+  year_uniques$fyear[i] <- year
+  year_uniques$uniqes[i] <- n_distinct(d[d$fyear == year,]$nf_customer_key)
+  #How many unique keys in yerar before (year-1) are not in current year
+  year_uniques$lost[i] <- n_distinct(d[d$fyear == year -1,]$nf_customer_key[which(d[d$fyear == year -1,]$nf_customer_key %!in%
+                                        d[d$fyear == (year),]$nf_customer_key)])
+  #How many people gave for the first time in year
+  year_uniques$new[i] <- n_distinct(d_start_date[d_start_date$start_year == year,]$nf_customer_key)
+}
+#order
+year_uniques <- year_uniques %>% 
+  select(-1) %>% 
+  arrange(fyear)
+#chirn and acquisition rate 
+year_uniques$`Churn Rate` <- round(year_uniques$lost / lag(year_uniques$uniqes), 4)
+year_uniques$`Acquisition Rate` <- round(year_uniques$new / lag(year_uniques$uniqes), 4)
+year_uniques$churn_ma <- cumsum(c(0,na.omit(year_uniques$`Churn Rate`))) / 1:length(year_uniques$`Churn Rate`)
+```
+
+```{r}
+ggplot(year_uniques %>% 
+         filter(fyear %!in% c(2008:2012,2018)) %>%
+         gather(metric, val, `Churn Rate`:`Acquisition Rate`),
+       aes(x = fyear,
+           y = val,
+           color = metric)) +
+  labs(title = "Churn and Acquisition Rates. FY2010-FY2017.",
+       x = "",
+       y = "",
+       color = "") +
+  geom_point(size = 1.8) +
+  geom_line(size = 1.3) +
+  scale_y_continuous(breaks = c(0.25, 0.3, 0.35, 0.4, 0.45),
+                     labels = scales::percent) +
+  scale_x_continuous(breaks = 2013:2017,
+                     labels = paste("FY", 13:17, sep = "")) +
+  scale_color_manual(values = c("#109dcc", "#cc4b10", "#ccb910")) +
+  my_theme +
+  theme(legend.position = c(0.77, 0.8),
+        legend.key = element_blank())
+  
+```
+
+

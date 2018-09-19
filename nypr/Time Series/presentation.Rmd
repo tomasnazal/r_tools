@@ -1,0 +1,442 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+
+```{r}
+#load Packages
+library(ggplot2)
+library(stringr)
+library(lubridate)
+library(zoo)
+library(purrr)
+library(gtools)
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(mytools)
+library(mlogit)
+library(forecast)
+```
+#Functions
+```{r}
+#function to place a position above, in the middle or below thirds of the distribution
+div_thirds <- function(x, left, right){
+  return(factor(ifelse(x <= quantile(x, left, na.rm = T), "Low",
+                ifelse(dplyr::between(x,
+                               quantile(x, left, na.rm = T),
+                               quantile(x, right, na.rm = T)), "Middle",
+                       "High")), levels = c("Low", "Middle", "High")))
+}
+
+mape <- function(actual, predicted, digits=2){
+  round(mean(abs((actual-predicted)/actual)*100, na.rm = T), digits)
+}
+
+```
+
+```{r}
+#Read Data
+d <- fread("~/Documents/Podcast S1 Forecast/per day data/ondemand_clean.csv") %>% 
+  mutate(month_date = as.Date(paste("01-", month, sep = ""), format = "%d-%b-%Y")) %>%
+  filter(story_start_date >= as.Date("2016-03-01"))
+show_data <- read.csv("~/Documents/Podcast S1 Forecast/per day data/show_data.csv")
+show_data$show <- ifelse(show_data$show == "Radiolab Presents: More Perfect",
+                           "More Perfect", as.character(show_data$show))
+
+#Process
+d[, grep("date", colnames(d))] <- lapply(d[, grep("date", colnames(d))],
+                                        function(x) as.Date(x, format = "%Y-%m-%d"))
+d <- d %>% filter(show_start_date >= "2016-03-01",
+                  show %in% show_data$show)
+```
+
+#Eliminate feedwarmers, create real story start date 
+```{r}
+#dataframe w/the day of release of the first episode
+a <- d %>% group_by(show) %>%
+  filter(story_start_date == min(story_start_date)) %>% 
+  summarise(ep = story[1])
+#dataframe w not the first story (feed warmer), start date of that one
+d <- d %>% filter(story %!in% a[a$show != "The New Yorker Comment",]$ep) %>%
+  group_by(show, story) %>% 
+  mutate(story_start_date1 = min(date))
+
+temp <- d %>% group_by(show, story) %>%
+  summarise(n_sdates = n_distinct(story_start_date),
+            story_start_date = min(story_start_date),
+            story_start_date1 = min(story_start_date1),
+            timediff = difftime(story_start_date1, story_start_date),
+            orig_dls = ifelse(length(which(date == min(story_start_date))) == 0, NA,
+                              downloads[which(date == min(story_start_date))]),
+            new_dls = downloads[which(date == story_start_date1[1])][1]) %>%
+  mutate(story_start_date_real =  if_else(is.na(orig_dls) | n_sdates > 1, story_start_date1,
+                                  story_start_date)) %>% 
+  filter(timediff != 0 |
+         n_sdates > 1)
+
+d <- d %>%
+  left_join(temp %>% select(show, story, story_start_date_real)) %>% 
+  mutate(story_start_date = as.Date(if_else(!is.na(story_start_date_real),
+                                   story_start_date_real,
+                                   story_start_date))) %>% 
+  select(-story_start_date_real)
+
+d$published_that_day <- ifelse(d$date == d$story_start_date, 1, 0)
+rm(a,temp)
+```
+
+#Aggregation Datasets
+```{r}
+#Daylevel
+d_daylevel <- d %>% select(date, show, downloads, story_start_date, published_that_day) %>%
+  group_by(show,date) %>% 
+  summarise(downloads = sum(downloads),
+            release = sum(published_that_day)) %>% 
+  arrange(show,date) %>%
+  group_by(show) %>%
+  mutate(ma = cumsum(downloads) / row_number(date),
+         cum_dls = cumsum(downloads),
+         total_episodes = cumsum(release)) %>% 
+  ungroup() %>% 
+  group_by(show) %>%
+  filter(date >= min(c(date[which(release > 0)])) &
+           downloads > 20) %>%  #this step eliminate long periods of no downloads before launch
+  mutate(rleid = rleid(release)) %>% #this counts the length of days w/o releases to establish season 
+  group_by(show, rleid) %>% 
+  mutate(in_season = ifelse(sum(release) > 0, 1,
+                            ifelse(length(release) > 20, 0, 1))) %>% #more than 20 days of silence defines off-season
+  ungroup()
+d_daylevel <- d_daylevel %>% group_by(show) %>% arrange(show, date) %>% mutate(day_n = row_number(date))
+```
+
+```{r}
+#Summary
+d_showlevel <- d_daylevel %>%
+  group_by(show) %>% 
+  summarise(length = length(date),
+         n_eps_100 = ifelse(length(which(date == min(date) + 100)) == 0, NA,
+                            total_episodes[which(date == min(date) + 100)]),
+         cum_3 = cum_dls[which(date == min(date) + 3)],
+         cum_5 = cum_dls[which(date == min(date) + 5)],
+         cum_10 = cum_dls[which(date == min(date) + 10)],
+         cum_20 = cum_dls[which(date == min(date) + 20)],
+         cum_30 = cum_dls[which(date == min(date) + 30)],
+         cum_100 = ifelse(length(which(date == min(date) + 100)) == 0, NA,
+                          cum_dls[which(date == min(date) + 100)])) %>% 
+  ungroup() %>% 
+  mutate(cum_3_third = div_thirds(cum_3, .33, .66),
+         cum_5_third = div_thirds(cum_5, .33, .66),
+         cum_10_third = div_thirds(cum_10, .33, .66),
+         cum_20_third = div_thirds(cum_20, .33, .66),
+         cum_30_third = div_thirds(cum_30, .33, .66),
+         cum_100_third = div_thirds(cum_100, .33, .66))
+
+
+```
+
+
+#By day, by episode, by show
+```{r}
+for(i in unique(d$show)){
+  print(ggplot(d_daylevel %>% filter(show == i)) +
+          labs(title = i) +
+          geom_line(aes(x = date,
+                        y = downloads)) +
+          my_theme)
+}
+```
+
+#By day, by show, MA
+```{r}
+for(i in unique(d_daylevel$show)){
+  print(ggplot(d_daylevel %>% select(show, date, release, downloads, ma) %>% 
+                 filter(show == i) %>% 
+                 gather(var, val, c(downloads,ma))) +
+          labs(title = i) +
+          geom_vline(xintercept = d_daylevel[d_daylevel$show == i &
+                                             d_daylevel$release != 0,]$date,
+                     linetype = "dashed",
+                     color = "grey") +
+          geom_line(aes(x = date,
+                        y = val,
+                        color = var)) +
+          my_theme)
+}
+```
+
+
+
+#Cummulative Downloads
+```{r}
+for(i in unique(d_daylevel$show)){
+  print(ggplot(d_daylevel %>% 
+                 filter(show == i)) +
+          labs(title = i,
+               color = "episodes") +
+          geom_vline(xintercept = d_daylevel[d_daylevel$show == i &
+                                             d_daylevel$release > 0,]$date,
+                     linetype = "dashed",
+                     color = "grey") +
+          geom_vline(data = d_daylevel[d_daylevel$show == i &
+                                             d_daylevel$release > 0,],
+                    aes(xintercept = date,
+                        color = as.factor(release)),
+                    linetype = "dashed")+
+          geom_line(aes(x = date,
+                        y = cum_dls),
+                    color = "#218cba") +
+          scale_y_continuous(labels = scales::comma) +
+          scale_color_manual(values = c("grey", "#10cc2f", "#cc2c10")) +
+          my_theme +
+          theme(legend.position = c(0.13,0.9),
+                legend.title = element_text(size = 8),
+                legend.text = element_text(size = 8),
+                legend.key.size = unit(0.6, "lines"),
+                legend.box.background = element_rect(color = "grey")))
+}
+
+```
+
+
+#First 30 days
+```{r}
+for(i in unique(d_daylevel$show)){
+  print(ggplot(d_daylevel %>%
+                 filter(show == i) %>% 
+                 filter(date < min(date) + 30)) +
+          labs(title = i,
+               color = "episodes") +
+          geom_vline(xintercept = d_daylevel[d_daylevel$show == i &
+                                             d_daylevel$release > 0,]$date,
+                     linetype = "dashed",
+                     color = "grey") +
+          geom_vline(data = d_daylevel[d_daylevel$show == i &
+                                             d_daylevel$release > 0,],
+                    aes(xintercept = date,
+                        color = as.factor(release)),
+                    linetype = "dashed")+
+          geom_line(aes(x = date,
+                        y = cum_dls),
+                    color = "#218cba") +
+          geom_point(aes(x = date,
+                        y = cum_dls),
+                    color = "#218cba") +
+          scale_y_continuous(labels = scales::comma) +
+          scale_color_manual(values = c("grey", "#10cc2f", "#cc2c10")) +
+          my_theme +
+          theme(legend.position = c(0.13,0.9),
+                legend.title = element_text(size = 8),
+                legend.text = element_text(size = 8),
+                legend.key.size = unit(0.6, "lines"),
+                legend.box.background = element_rect(color = "grey")))
+}
+
+```
+#all togehter
+```{r, fig.height=5, fig.width=10}
+plotly::ggplotly(ggplot(d_daylevel) +# %>% 
+                 #filter(date < min(date) + 120)) +
+          labs(title = "Cumulative Downloads. All Shows",
+               color = "episodes") +
+          geom_line(aes(x = date,
+                        y = cum_dls,
+                    color = show)) +
+          #scale_color_manual(values = c("grey", "#10cc2f", "#cc2c10")) +
+          my_theme +
+          theme(legend.position = "none"),width = 1000, height = 500)
+```
+
+
+```{r, fig.height=20, fig.width=40}
+plotly::ggplotly(ggplot(d_daylevel %>%
+                          group_by(show) %>% 
+                 filter(date < min(date) + 30)) +
+          labs(title = "First 30 Days Cumulative Downloads. All Shows",
+               color = "episodes") +
+          geom_line(aes(x = date,
+                        y = cum_dls,
+                    color = show)) +
+          #scale_color_manual(values = c("grey", "#10cc2f", "#cc2c10")) +
+          my_theme +
+          theme(legend.position = "none"),width = 1000, height = 500)
+```
+
+
+#all together at the same time 
+```{r}
+plotly::ggplotly(ggplot(d_daylevel %>%
+                          group_by(show) %>% 
+                          #filter(date < min(date) + 120) %>% 
+                          arrange(show, date) %>% 
+                          mutate(day_n = row_number(date))
+                          ) +
+          labs(title = "Comparative Trajectories. All Shows.",
+               color = "episodes") +
+          geom_line(aes(x = day_n,
+                        y = cum_dls,
+                    color = show)) +
+          #scale_color_manual(values = c("grey", "#10cc2f", "#cc2c10")) +
+          my_theme,width = 1000, height = 500 )
+```
+
+#cumdays plot
+```{r}
+plotly::ggplotly(ggplot(a <- d_showlevel %>% 
+         gather(day, cumdls, cum_3:cum_30) %>% 
+         mutate(day = factor(day, levels = c("cum_3", "cum_5", "cum_10", "cum_20", "cum_30"))))  +
+  geom_path(aes(x = as.numeric(day),
+                y = cumdls,
+                group = show,
+                color = cum_30_third)) +
+    geom_point(aes(x = as.numeric(day),
+                y = cumdls,
+                group = show,
+                color = cum_30_third)) +
+  my_theme +
+  scale_x_continuous(breaks = 1:5, labels = c("cum_3", "cum_5", "cum_10", "cum_20", "cum_30")),
+  width = 1000, height = 500)
+```
+
+
+```{r}
+plotly::ggplotly(ggplot(a <- d_showlevel %>%
+                          arrange(cum_3_third) %>% 
+                          mutate(show = factor(show, levels = show)) %>% 
+         gather(day, cumdls, cum_3_third:cum_100_third) %>% 
+         mutate(day = factor(day, levels = c("cum_3_third", "cum_5_third",
+                                             "cum_10_third", "cum_20_third",
+                                             "cum_30_third", "cum_100_third")),
+                cumdls = factor(cumdls, levels = c("Low", "Middle", "High"))))  +
+  labs(title = paste("Download Tier Through Time.")) +
+  geom_path(aes(x = as.numeric(day),
+                y = as.numeric(cumdls),
+                group = show,
+                color = show)) +
+   geom_point(aes(x = as.numeric(day),
+                y = as.numeric(cumdls),
+                group = show,
+                color = show)) +
+  my_theme +
+  scale_x_continuous(breaks = 1:6, labels = c("cum_3", "cum_5", "cum_10", "cum_20", "cum_30", "cum_100")) +
+  scale_y_continuous(breaks = 1:3, labels = c("Low", "Middle", "High")), limits = c(1,3),width = 1000, height = 500 
+)
+```
+
+
+
+
+#Cross-Sectional regression
+```{r}
+d_pred <- d_showlevel
+d_pred$n_eps_100[c(3,7,17)] <- c(12,16,16)
+d_mlogit = mlogit.data(d_showlevel, varying = NULL,
+                       choice = "cum_100_third",
+                       shape = "wide")
+d_mlogit_pred = mlogit.data(d_pred, varying = NULL,
+                       choice = "cum_100_third",
+                       shape = "wide")
+
+for(i in colnames(d_showlevel)[grep("^cum_3$", colnames(d_showlevel)):grep("^cum_30$", colnames(d_showlevel))]){
+  model <- lm(cum_100 ~ get(i) + n_eps_100, data = d_showlevel)
+  d_showlevel[,paste("pred", i, sep = "_")] <- predict(model, newdata = d_pred)
+}
+d_showlevel$pred_3to10 <- predict(lm(cum_100 ~ cum_3 + cum_5 + cum_10 + n_eps_100, data = d_showlevel), newdata = d_pred)
+```
+
+
+```{r}
+ggplot(d_showlevel %>% gather(var, actual, c(cum_100, pred_cum_3:pred_3to10)) %>% 
+         mutate(show = substr(show, 1, 10))) +
+  labs(title = "Actuals and Predicted at day 100 at Different Days") +
+       geom_bar(aes(x = show,
+                    y = actual,
+                    fill = var),
+                stat = "identity",
+                position = "dodge") +
+  scale_fill_manual(values = c("black", "#1156c4", "#11c4a3", "#c1c411", "#c46711", "#c4118b", "#acc411")) +
+  my_theme +
+  theme(legend.position = "bottom") +
+  theme(axis.text.x = element_text(angle = 45))
+
+```
+
+
+```{r}
+ggplot(a <- d_showlevel %>%
+         mutate_at(16:21, funs(./cum_100)) %>% 
+         mutate(cum_100 = 1) %>% 
+         gather(var, actual, c(cum_100, pred_cum_3:pred_3to10)) %>% 
+         mutate(show = substr(show, 1, 10))) +
+  labs(title = "Actuals and Predicted at day 100 at Different Days. Actual-to-1 Normalization") +
+       geom_bar(aes(x = show,
+                    y = actual,
+                    fill = var),
+                stat = "identity",
+                position = "dodge") +
+  scale_fill_manual(values = c("black", "#1156c4", "#11c4a3", "#c1c411", "#c46711", "#c4118b", "#acc411")) +
+  my_theme +
+  theme(legend.position = "bottom") +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+```{r}
+ggplot(a <- d_showlevel %>%
+         mutate_at(16:21, funs(./cum_100)) %>% 
+         mutate(cum_100 = 1) %>% 
+         gather(var, actual, c(cum_100, pred_cum_3:pred_3to10)) %>% 
+         mutate(show = substr(show, 1, 10)) %>%
+         group_by(show) %>% 
+         filter(var != "cum_100") %>% 
+         slice(which.min(actual)))  +
+  labs(title = "Actuals and Predicted at day 100 at Different Days. Actual-to-1 Normalization") +
+       geom_bar(aes(x = show,
+                    y = actual,
+                    fill = var),
+                stat = "identity",
+                position = "dodge") +
+  scale_fill_manual(values = c("#1156c4", "#11c4a3", "#c1c411", "#c46711", "#c4118b", "#acc411")) +
+  my_theme +
+  theme(legend.position = "bottom") +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+
+#Time Series Regression. Caught Example.
+```{r}
+d_ts <- d_daylevel %>%
+  ungroup() %>%
+  filter(show == "Caught") %>% 
+  select(cum_dls, total_episodes, day_n)
+
+
+for(i in c(3,5,10,20,30)){
+print(plot(forecast(auto.arima(ts(d_ts[d_ts$day_n <= i,]$cum_dls),
+                               xreg = d_ts[d_ts$day_n <= i,]$total_episodes),
+           h= 100,
+           xreg = d_ts[d_ts$day_n > i & d_ts$day_n <=100,]$total_episodes )))
+  
+}  
+
+```
+
+
+```{r}
+ggplot(d_daylevel %>% filter(show == "Caught",
+                             day_n <= 45)) +
+  labs(title = "Actual Caught Curve") +
+  geom_line(aes(x = day_n,
+                y = cum_dls)) +
+  scale_x_continuous(breaks = 1:45, labels = 1:45) +
+  my_theme
+```
+
+
+

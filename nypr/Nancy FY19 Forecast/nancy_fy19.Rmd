@@ -1,0 +1,178 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(dplyr)
+library(forecast)
+library(ggplot2)
+library(tidyr)
+library(mytools)
+```
+
+
+```{r}
+d <- read.csv("nancy_ts.csv")
+eps <- read.csv("nancy_eps.csv")
+colnames(d) <- c("date", "downloads")
+colnames(eps) <- c("story", "publish_date")
+d$date <- as.Date(d$date)
+eps$publish_date <- as.Date(eps$publish_date)
+
+d$publish_day <- ifelse(d$date %in% eps$publish_date, 1, 0)
+d <- d %>% 
+  arrange(date) %>% 
+  filter(date >= "2017-04-09",
+         date <= "2018-06-28") %>% 
+  mutate(cum_eps = cumsum(publish_day),
+         in_season = ifelse(between(date, as.Date("2017-08-03"), as.Date("2017-08-19")) |
+                              between(date, as.Date("2017-12-07"), as.Date("2018-04-14")),
+                            0,1))
+#Back catalogue stuff
+back <- read.csv("nancy_eps_date.csv")
+
+colnames(back) <- c("date", "story", "publish_date", "downloads")
+back$date <- as.Date(back$date)
+back$publish_date <- as.Date(back$publish_date)
+back <- arrange(back, date)
+
+
+back$day_downloads <- ifelse(back$date >= back$publish_date -2 &
+                               back$date <= back$publish_date + 7,
+                             1, 0) 
+
+a <- back %>% group_by(date, day_downloads) %>% summarise(downloads = sum(downloads))
+bac <- spread(a,day_downloads, downloads)
+bac$`0` <- ifelse(is.na(bac$`0`),1, bac$`0`)
+bac$`1` <- ifelse(is.na(bac$`1`),1, bac$`1`)
+colnames(bac) <- c("date", "back","current")
+bac$prop <- bac$back / (bac$current + bac$back)
+rm(a)
+```
+
+
+```{r}
+ggplot(d) +
+  labs(title = "Nancy. Downloads by Day.") +
+  geom_line(aes(x = date,
+                y = downloads)) +
+  my_theme +
+  theme(panel.grid.major.y = element_line(color = "grey"),
+        panel.grid.minor.y = element_line(color = "grey",
+                                          linetype = "dashed"))
+```
+
+
+```{r}
+#simualted fy 19
+#simulated year vector
+by_day_calc <- function(start,
+                        season_start,
+                        season_length,
+                        calc_season = F){
+  start <- as.Date(start)
+  lead_time <- rep(0, as.Date(season_start) - start)
+  if(calc_season){
+    season <- rep(1, season_length*7)
+  }else{
+   season <- rep(c(1, rep(0,6)), season_length) 
+  }
+  trail <- rep(0, as.Date("2019-07-01") - (start + length(lead_time) + length(season)))
+  return(c(lead_time, season, trail))
+                        }
+
+##case 1
+case1 <- data.frame(publish_day = by_day_calc("2018-07-02",
+                                              "2018-09-06",
+                                              28))
+case1$in_season <- by_day_calc("2018-07-02",
+                               "2018-09-06",
+                               28,
+                               calc_season = T)
+case1[sample(which(case1$publish_day == 0 &
+                     case1$in_season == 1), 3), 1] <- c(1,1,1) #estra episdoes
+case1$cum_eps <- cumsum(case1$publish_day) + max(d$cum_eps)
+
+##case 2
+case2 <- data.frame(publish_day = by_day_calc("2018-07-02",
+                                              "2018-09-06",
+                                              42))
+case2$in_season <- by_day_calc("2018-07-02",
+                               "2018-09-06",
+                               42,
+                               calc_season = T)
+case2$cum_eps <- cumsum(case2$publish_day) + max(d$cum_eps)
+```
+
+
+
+```{r}
+d_ts <- ts(d %>% select(downloads))
+d_ts_cov <- ts(d %>% mutate(cum_eps_log = log(cum_eps)) %>% select(publish_day, cum_eps_log, in_season))
+xreg_cov <- ts(case1 %>% mutate(cum_eps_log = log(cum_eps)) %>% select(publish_day, cum_eps_log, in_season))
+xreg_cov2 <- ts(case2 %>% mutate(cum_eps_log = log(cum_eps)) %>% select(publish_day, cum_eps_log, in_season))
+```
+
+```{r}
+plot(forecast(auto.arima(d_ts, xreg = d_ts_cov, stationary = F),h=nrow(case1), xreg = xreg_cov))
+```
+
+
+```{r}
+plot(forecast(auto.arima(d_ts, xreg = d_ts_cov, stationary = F),h=nrow(case2), xreg = xreg_cov2))
+
+```
+
+```{r}
+#Arima
+case1_arima <- forecast(auto.arima(d_ts, xreg = d_ts_cov, stationary = F),h=nrow(case1), xreg = xreg_cov)
+case2_arima <- forecast(auto.arima(d_ts, xreg = d_ts_cov, stationary = F),h=nrow(case2), xreg = xreg_cov2)
+
+#Make data frames w/prediction
+case1_fore <- data.frame(rbind(d %>% select(date, downloads),
+                               data.frame(date = max(d$date) + 1:length(case1_arima$mean),
+                                 downloads =case1_arima$mean)))
+case1_fore$fy <- fy(case1_fore$date)
+
+case2_fore <- data.frame(rbind(d %>% select(date, downloads),
+                               data.frame(date = max(d$date) + 1:length(case2_arima$mean),
+                                 downloads =case2_arima$mean)))
+case2_fore$fy <- fy(case2_fore$date)
+```
+
+```{r}
+ggplot(case1_fore) +
+  labs(title = "Nancy by Day Downloads. Financial Years and Forecast. Scenario 1",
+       x = "date",
+       y = "downloads",
+       color = "Financial Year")+
+  geom_line(aes(x = date, y = downloads, color = as.factor(fy))) + 
+    my_theme +
+  theme(legend.position = c(0.8, 0.79))
+```
+
+```{r}
+ggplot(case2_fore) +
+  labs(title = "Nancy by Day Downloads. Financial Years and Forecast",
+       x = "date",
+       y = "downloads",
+       color = "Financial Year")+
+  geom_line(aes(x = date, y = downloads, color = as.factor(fy))) + 
+    my_theme +
+  theme(legend.position = c(0.8, 0.79))
+```
+
+
+
+```{r}
+case1_fore_fy <- case1_fore %>%
+  group_by(fy) %>% 
+  summarise(downloads = sum(downloads)) %>% 
+  mutate(growth = round((downloads- lag(downloads)) / lag(downloads) * 100, 2))
+
+case2_fore_fy <- case2_fore %>%
+  group_by(fy) %>% 
+  summarise(downloads = sum(downloads)) %>% 
+  mutate(growth = round((downloads- lag(downloads)) / lag(downloads) * 100, 2))
+```
+

@@ -1,0 +1,144 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+#SQL
+# SELECT
+#   show.show_name AS show
+#   , EXTRACT(MONTH FROM odl.listen_timestamp) AS month
+#   , ip_useragent_hash AS listeners
+# FROM ${on_demand_listens_unique.SQL_TABLE_NAME} AS odl INNER JOIN
+#   show ON odl.show_id = show.show_id
+# WHERE EXTRACT(YEAR from odl.listen_timestamp) = 2018 AND
+#   EXTRACT(MONTH from odl.listen_timestamp) IN (4,5,6) AND
+#   show.show_name IN ('Death, Sex & Money',
+#   '2 Dope Queens',
+#   'Radiolab',
+#   'On The Media',
+#   'Nancy',
+#   'The New Yorker: Fiction',
+#   'The New Yorker: Poetry',
+#   'The New Yorker: Politics and More',
+#   'The United States of Anxiety',
+#   'A Piece of Work',
+#   'More Perfect',
+#   'Sooo Many White Guys',
+#   'Here''s The Thing',
+#   'The New Yorker Radio Hour',
+#   'Snap Judgement',
+#   'Werk It: The Podcast',
+#   'A Piece of Work',
+#   'On The Media',
+#   'Note to Self',
+#   'Snap Judgement Presents: Spooked',
+#   'Stay Tuned with Preet',
+#   'Freakonomics Radio',
+#   'There Goes the Neighborhood',
+#   'Stay Tuned with Preet',
+#   'This Podcast Has Fleas',
+#   'Pickle',
+#   'Trump, Inc.',
+#   'Indivisible',
+#   'Caught',
+#   'Late Night Whenever',
+#   'Science Friday',
+#   'The Orbiting Human Circus',
+#   'American Fiasco')
+# GROUP BY 1, 2, 3
+```
+
+
+
+```{r}
+library(stringr)
+library(data.table)
+```
+
+#Functions
+```{r}
+dict_replace <- function(data, str_var, dictionary, key, val){
+  new_str_var <- data[[str_var]]
+  for(i in seq(nrow(data))){
+  for(j in seq(nrow(dictionary))){
+    if(grepl(pattern = dictionary[[key]][j],
+             x = data[[str_var]][i])) {
+      new_str_var[i] <- gsub(pattern = dictionary[[key]][j],
+                          replacement =  dictionary[[val]][j],
+                          x =  new_str_var[i])
+      }
+    }
+  }
+  return(new_str_var)
+}
+```
+
+
+```{r}
+d <- fread("crosspromo.csv")
+colnames(d) <- c("campaign", "impressions", "target", "start_date", "end_date", "x")
+d$x <- NULL
+d <- d %>% 
+  mutate(target = strsplit(as.character(target), "\n")) %>%
+  rowwise() %>% 
+  mutate(target = list(target)) %>% 
+  unnest() %>% 
+  mutate(campaign_num = as.numeric(as.factor(campaign)))
+d[grep("date", colnames(d))] <- lapply(d[grep("date", colnames(d))],
+                                      function(x) as.Date(x, format = "%m/%d/%y"))
+d$target <- gsub("The New Yorker_", "The New Yorker: ", d$target)
+  
+```
+
+```{r}
+dict <- data.frame(key = c("DSM", "2DQ", "RL", "OTM", "The New Yorker: Political Scene",
+                           "SnapJ", "Werk It", "NTS", "Spooked", "NYS", "NYRH", "2Dope",
+                           "TNYRH", "New Yorker", "Preet", "HTT", "Fleas", "Freak",
+                           "Two Dope Queens", "Trump Inc", "snap", "SMWG", "Here’s the Thing with Alec Baldwin",
+                           "LNW", "Late_Night_Whenever", "he New Yorker_Fiction", "U.S. of Anxiety", "SciFri",
+                           "Orbiting Human Circus", "Snap"),
+                   value = c("Death, Sex & Money",
+                             "2 Dope Queens",
+                             "Radiolab",
+                             "On The Media",
+                             "The New Yorker: Politics and More",
+                             "Snap Judgement",
+                             "Werk It: The Podcast",
+                             "Note to Self",
+                             "Snap Judgement Presents: Spooked",
+                             "Note to Self",
+                             "The New Yorker Radio Hour",
+                             "2 Dope Queens",
+                             "The New Yorker Radio Hour",
+                             "The New Yorker Radio Hour",
+                             "Stay Tuned with Preet",
+                             "Here's The Thing",
+                             "This Podcast Has Fleas",
+                             "Freakonomics Radio",
+                             "2 Dope Queens",
+                             "Trump, Inc.",
+                             "Snap Judgement",
+                             "Sooo Many White Guys",
+                             "Here's The Thing",
+                             "Late Night Whenever",
+                             "Late Night Whenever",
+                             "The New Yorker: Fiction",
+                             "The United States of Anxiety",
+                             "Science Friday",
+                             "The Orbiting Human Circus",
+                             "Snap Judgement"))
+
+non <- c("The Moth")
+```
+
+```{r}
+#Change abbreviated show names to standard
+d$campaign <- dict_replace(d, "campaign", dict, "key", "value")
+d$target <- dict_replace(d, "target", dict, "key", "value")
+```
+
+
+
+
+
+

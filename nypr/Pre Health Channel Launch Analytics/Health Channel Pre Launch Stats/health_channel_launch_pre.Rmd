@@ -1,0 +1,622 @@
+---
+title: 'Health Channel Pre-Launch Stats'
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows 
+    source_code: embed
+---
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+
+#load Packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+library(lubridate)
+library(plotly)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r}
+#Import data, reformat
+
+#Download Data
+d <- read.csv("pre_health_launch_clients.csv")
+usanx <- read.csv("usanxdata.csv")
+colnames(usanx)[3] <- colnames(d[3])
+d <- bind_rows(d, usanx)
+colnames(d) <- c('download_date', 'story', 'show',
+                 'story_first_date', 'published_to_podcast', 
+                 'client', 'downloads')
+#to date
+d[,grep("date", colnames(d))] <- lapply(d[,grep("date", colnames(d))],
+                                        function(x) as.Date(x, format = "%Y-%m-%d"))
+#new column names, arrange
+d <- d %>% select(show, story, download_date,
+                  downloads, story_first_date,
+                  client, published_to_podcast) %>% 
+  arrange(show, story, download_date)
+#published to podcast as dummy
+d$published_to_podcast <- ifelse(d$published_to_podcast == "Yes", 1, 0)
+#make doenload year and week variable
+d$download_year <- as.numeric(format(d$download_date, "%Y"))
+d$download_week <- as.numeric(format(d$download_date, "%W"))
+```
+
+
+```{r}
+#Working datasets
+
+#Data at the day level, ignores Client
+d_day <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, story, download_date) %>% 
+  summarise(downloads = sum(downloads),
+            story_first_date = min(story_first_date),
+            download_year = min(download_year),
+            download_week = min(download_week)) %>% 
+  arrange(show, story, download_date)
+d_day$published_that_day <- ifelse(d_day$story_first_date == d_day$download_date, 1, 0)
+
+#Aggregate Weekly
+d_week <- d_day %>% group_by(show, download_year,
+                             download_week) %>% 
+  summarise(indicator = min(download_date),
+            downloads = sum(downloads),
+            n_new_episodes = sum(published_that_day)) %>% 
+  arrange(show)
+
+#Aggregate Episode level 
+d_eps <- d_day %>% group_by(show, story, story_first_date) %>%
+  summarise(downloads = sum(downloads)) %>% 
+  ungroup() %>% 
+  group_by(show) %>% 
+  arrange(show, story_first_date) %>% 
+  mutate(ep_num = row_number())
+
+#For episode attrition. by week
+d_day_tr <- d_day %>% ungroup() %>% 
+  arrange(show, story_first_date) %>% 
+  mutate(story = factor(story, levels = d_eps[-202,]$story))
+
+d_day_week <- d_day_tr %>% group_by(show, story, download_year, download_week) %>% 
+  summarise(downloads = sum(downloads),
+            index = download_date[1])
+
+
+#Data at the week level with client
+d_week_client <- d %>% filter(published_to_podcast == 1) %>% 
+  group_by(show, story, client, download_date) %>% 
+  summarise(downloads = sum(downloads),
+            story_first_date = min(story_first_date),
+            download_year = min(download_year),
+            download_week = min(download_week)) %>% 
+  arrange(show, story, story_first_date, client, download_date) %>% 
+  ungroup() %>% 
+  group_by(show, client, download_year, download_week) %>% 
+  summarise(downloads = sum(downloads),
+            index = download_date[1])
+```
+
+
+
+Only Human
+====================
+
+Row {data-width = 500}
+---------------------------------------
+###Weekly Downloads 
+
+```{r, fig.height= 2.8, fig.width=6}
+ggplot(d_week %>% filter(show == "Only Human")) +
+  labs(title = "Weekly Downloads. Only Human",
+       x = "Week",
+       y = "Downloads") +
+  geom_line(aes(x = indicator,
+                y = downloads),
+            color = "red") +
+  geom_vline(data = d_week %>% filter(show == "Only Human",
+                               n_new_episodes > 0),
+             aes(xintercept = indicator),
+             linetype = "dashed",
+             color = "grey") +
+  stat_smooth(data = d_week %>%
+                filter(show == "Only Human",
+                       indicator <= as.Date("2016-08-08")),
+              aes(x = indicator,
+                y = downloads)) +
+  stat_smooth(data = d_week %>%
+                filter(show == "Only Human",
+                       indicator >= as.Date("2017-01-16"),
+                       indicator <= as.Date("2017-05-15")),
+              aes(x = indicator,
+                y = downloads)) +
+  my_theme
+```
+
+###Downloads per Episode 
+
+```{r, fig.height= 2.8, fig.width=6}
+ggplot(d_eps %>% filter(show == "Only Human")) +
+  labs(title = "Downloads per Episode. Only Human",
+       x = "Episode Number") +
+  geom_bar(aes(x = ep_num,
+                y = downloads),
+           stat = "identity",
+           fill = "#33b7cc") +
+  geom_point(aes(x = ep_num,
+                y = downloads),
+            color = "#ad0808",
+            size = 0.5) +
+  geom_line(aes(x = ep_num,
+                y = downloads),
+            color = "#ad0808") +
+  scale_x_continuous(breaks = seq(0,60,10)) +
+  my_theme
+```
+
+Row
+---------------------------------------
+###Episodes Over Time
+
+```{r}
+eps1 <- ggplot(d_day_week %>% filter(show == "Only Human")) +
+  labs(title = "Episode Downloads Over Time. Only Human",
+       x = "Date") +
+  geom_line(aes(x = index,
+                y = downloads,
+                color = story)) +
+  my_theme +
+  theme(legend.text = element_text(size = 1))
+
+
+ggplotly(eps1)
+
+```
+
+###Clients Over Time
+
+```{r}
+cl1 <- ggplot(d_week_client %>% filter(show == "Only Human")) +
+  labs(title = "Client Downloads Over Time. Only Human",
+       x = "Date") +
+  geom_line(aes(x = index,
+                y = downloads,
+                color = client)) +
+  geom_smooth(aes(x = index,
+                y = downloads,
+                color = client),
+              size = 0.5,
+              se = F,
+              linetype = "dashed") +
+  my_theme +
+  theme(legend.text = element_text(size = 8))
+
+
+ggplotly(cl1)
+
+```
+
+Death, Sex & Money
+====================
+
+Row
+---------------------------------------
+###Weekly Downloads 
+
+```{r, fig.height= 2.8, fig.width=6}
+ggplot(d_week %>% filter(show == "Death, Sex & Money")) +
+  labs(title = "Weekly Downloads. Death Sex & Money",
+       x = "Week",
+       y = "Downloads",
+       color = "Weekly Episodes") +
+  stat_smooth(aes(x = indicator,
+                y = downloads)) +
+  geom_line(aes(x = indicator,
+                y = downloads)) +
+  geom_vline(data = d_week %>% filter(show == "Death, Sex & Money",
+                               n_new_episodes > 0),
+             aes(xintercept = indicator,
+                 color = as.factor(n_new_episodes)),
+             linetype = "dashed") +
+  scale_x_date(breaks = c(unique(  (d_week %>% filter(show == "Death, Sex & Money"))$indicator )),
+               labels = NULL) +
+  my_theme +
+  theme(legend.position = "bottom",
+        legend.key = element_rect(fill = "white"),
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-10,-10,1,-10))
+
+```
+
+
+###Downloads per Episode 
+
+```{r, fig.height= 2.8, fig.width=6}
+ggplot(d_eps %>% filter(show == "Death, Sex & Money")) +
+  labs(title = "Downloads per Episode. Death, Sex & Money",
+       x = "Episode Number") +
+  geom_bar(aes(x = ep_num,
+                y = downloads),
+           stat = "identity",
+           fill = "#33b7cc") +
+  geom_point(aes(x = ep_num,
+                y = downloads),
+            color = "#ad0808",
+            size = 0.5) +
+  geom_line(aes(x = ep_num,
+                y = downloads),
+            color = "#ad0808") +
+  scale_x_continuous(breaks = seq(0,130,10)) +
+  my_theme
+```
+
+Row
+---------------------------------------
+###Episodes Over Time
+
+```{r}
+eps2 <- ggplot(d_day_week %>% filter(show == "Death, Sex & Money")) +
+  labs(title = "Episode Downloads Over Time. Death, Sex & Money",
+       x = "Date") +
+  geom_line(aes(x = index,
+                y = downloads,
+                color = story)) +
+  my_theme +
+  theme(legend.text = element_text(size = 1))
+
+
+ggplotly(eps2)
+
+```
+
+###Clients Over Time
+
+```{r}
+cl2 <- ggplot(d_week_client %>% filter(show == "Death, Sex & Money")) +
+  labs(title = "Client Downloads Over Time. Death, Sex & Money",
+       x = "Date") +
+  geom_line(aes(x = index,
+                y = downloads,
+                color = client)) +
+  geom_smooth(aes(x = index,
+                y = downloads,
+                color = client),
+              size = 0.5,
+              se = F,
+              linetype = "dashed") +
+  my_theme +
+  theme(legend.text = element_text(size = 8))
+
+
+ggplotly(cl2)
+
+```
+
+There Goes the Neighborhood
+====================
+
+Row
+---------------------------------------
+###Weekly Downloads 
+
+```{r, fig.height= 2.8, fig.width=6}
+ggplot(d_week %>% filter(show == "There Goes the Neighborhood")) +
+  labs(title = "Weekly Downloads. There Goes the Neighborhood",
+       x = "Week",
+       y = "Downloads",
+       color = "Weekly Episodes") +
+  stat_smooth(data = d_week %>%
+                filter(show == "There Goes the Neighborhood",
+                       indicator <= as.Date("2016-05-02")),
+              aes(x = indicator,
+                y = downloads)) +
+  stat_smooth(data = d_week %>%
+                filter(show == "There Goes the Neighborhood",
+                       indicator >= as.Date("2017-09-18"),
+                       indicator <= as.Date("2017-11-06")),
+              aes(x = indicator,
+                y = downloads)) +
+  geom_line(aes(x = indicator,
+                y = downloads)) +
+  geom_vline(data = d_week %>% filter(show == "There Goes the Neighborhood",
+                               n_new_episodes > 0),
+             aes(xintercept = indicator,
+                 color = as.factor(n_new_episodes)),
+             linetype = "dashed") +
+  scale_x_date(breaks = c(unique(  (d_week %>% filter(show == "There Goes the Neighborhood"))$indicator )),
+               labels = NULL) +
+  my_theme +
+  theme(legend.position = "bottom",
+        legend.key = element_rect(fill = "white"),
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-10,-10,1,-10))
+
+```
+
+###Downloads per Episode 
+
+```{r, fig.height= 2.8, fig.width=6}
+ggplot(d_eps %>% filter(show == "There Goes the Neighborhood")) +
+  labs(title = "Downloads per Episode. There Goes the Neighborhood",
+       x = "Episode Number") +
+  geom_bar(aes(x = ep_num,
+                y = downloads),
+           stat = "identity",
+           fill = "#33b7cc") +
+  geom_point(aes(x = ep_num,
+                y = downloads),
+            color = "#ad0808",
+            size = 0.5) +
+  geom_line(aes(x = ep_num,
+                y = downloads),
+            color = "#ad0808") +
+  #scale_x_continuous(breaks = seq(0,60,10)) +
+  my_theme
+```
+
+Row
+---------------------------------------
+###Episodes Over Time
+
+```{r}
+eps3 <- ggplot(d_day_week %>% filter(show == "There Goes the Neighborhood")) +
+  labs(title = "Episode Downloads Over Time. There Goes the Neighborhood",
+       x = "Date") +
+  geom_line(aes(x = index,
+                y = downloads,
+                color = story)) +
+  my_theme +
+  theme(legend.text = element_text(size = 1))
+
+
+ggplotly(eps3)
+```
+
+
+###Clients Over Time
+
+```{r}
+cl3 <- ggplot(d_week_client %>% filter(show == "There Goes the Neighborhood")) +
+  labs(title = "Client Downloads Over Time. There Goes the Neighborhood",
+       x = "Date") +
+  geom_line(aes(x = index,
+                y = downloads,
+                color = client)) +
+  geom_smooth(aes(x = index,
+                y = downloads,
+                color = client),
+              size = 0.5,
+              se = F,
+              linetype = "dashed") +
+  my_theme +
+  theme(legend.text = element_text(size = 8))
+
+
+ggplotly(cl3)
+
+```
+
+Nancy
+====================
+
+Row
+---------------------------------------
+###Weekly Downloads 
+
+```{r, fig.height= 2.8, fig.width=6}
+ggplot(d_week %>% filter(show == "Nancy")) +
+  labs(title = "Weekly Downloads. Nancy",
+       x = "Week",
+       y = "Downloads",
+       color = "Weekly Episodes") +
+   stat_smooth(data = d_week %>%
+                filter(show == "Nancy",
+                       indicator <= as.Date("2017-06-19")),
+              aes(x = indicator,
+                y = downloads)) +
+  stat_smooth(data = d_week %>%
+                filter(show == "Nancy",
+                       indicator >= as.Date("2017-08-14"),
+                       indicator <= as.Date("2017-11-27")),
+              aes(x = indicator,
+                y = downloads)) +
+  geom_line(aes(x = indicator,
+                y = downloads)) +
+  geom_vline(data = d_week %>% filter(show == "Nancy",
+                               n_new_episodes > 0),
+             aes(xintercept = indicator,
+                 color = as.factor(n_new_episodes)),
+             linetype = "dashed") +
+ 
+  scale_x_date(breaks = c(unique(  (d_week %>% filter(show == "Nancy"))$indicator )),
+               labels = NULL) +
+  my_theme +
+  theme(legend.position = "bottom",
+        legend.key = element_rect(fill = "white"),
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-10,-10,1,-10))
+
+```
+
+###Downloads per Episode 
+
+```{r, fig.height= 2.8, fig.width=6}
+ggplot(d_eps %>% filter(show == "Nancy")) +
+  labs(title = "Downloads per Episode. Nancy",
+       x = "Episode Number") +
+  geom_bar(aes(x = ep_num,
+                y = downloads),
+           stat = "identity",
+           fill = "#33b7cc") +
+  geom_point(aes(x = ep_num,
+                y = downloads),
+            color = "#ad0808",
+            size = 0.5) +
+  geom_line(aes(x = ep_num,
+                y = downloads),
+            color = "#ad0808") +
+  #scale_x_continuous(breaks = seq(0,60,10)) +
+  my_theme
+```
+
+Row
+---------------------------------------
+###Episodes Over Time
+
+```{r}
+eps4 <- ggplot(d_day_week %>% filter(show == "Nancy")) +
+  labs(title = "Episode Downloads Over Time. Nancy",
+       x = "Date") +
+  geom_line(aes(x = index,
+                y = downloads,
+                color = story)) +
+  my_theme +
+  theme(legend.text = element_text(size = 1))
+
+
+ggplotly(eps4)
+```
+
+###Clients Over Time
+
+```{r}
+cl4 <- ggplot(d_week_client %>% filter(show == "Nancy")) +
+  labs(title = "Client Downloads Over Time. Nancy",
+       x = "Date") +
+  geom_line(aes(x = index,
+                y = downloads,
+                color = client)) +
+  geom_smooth(aes(x = index,
+                y = downloads,
+                color = client),
+              size = 0.5,
+              se = F,
+              linetype = "dashed") +
+  my_theme +
+  theme(legend.text = element_text(size = 8))
+
+
+ggplotly(cl4)
+
+```
+
+
+USAnxiety
+====================
+
+Row {data-width = 500}
+---------------------------------------
+###Weekly Downloads 
+
+```{r, fig.height= 2.8, fig.width=6}
+ggplot(d_week %>% filter(show == "The United States of Anxiety")) +
+  labs(title = "Weekly Downloads. The United States of Anxiety",
+       x = "Week",
+       y = "Downloads",
+       color = "Weekly Episodes") +
+   stat_smooth(data = d_week %>%
+                filter(show == "The United States of Anxiety",
+                       indicator <= as.Date("2016-11-21")),
+              aes(x = indicator,
+                y = downloads)) +
+  stat_smooth(data = d_week %>%
+                filter(show == "The United States of Anxiety",
+                       indicator >= as.Date("2017-05-01"),
+                       indicator <= as.Date("2017-07-03")),
+              aes(x = indicator,
+                y = downloads)) +
+  stat_smooth(data = d_week %>%
+                filter(show == "The United States of Anxiety",
+                       indicator >= as.Date("2017-08-21"),
+                       indicator <= as.Date("2017-10-09")),
+              aes(x = indicator,
+                y = downloads)) +
+  geom_line(aes(x = indicator,
+                y = downloads)) +
+  geom_vline(data = d_week %>% filter(show == "The United States of Anxiety",
+                               n_new_episodes > 0),
+             aes(xintercept = indicator,
+                 color = as.factor(n_new_episodes)),
+             linetype = "dashed") +
+ 
+  scale_x_date(breaks = c(unique(  (d_week %>% filter(show == "The United States of Anxiety"))$indicator )),
+               labels = NULL) +
+  my_theme +
+  theme(legend.position = "bottom",
+        legend.key = element_rect(fill = "white"),
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-10,-10,1,-10))
+```
+
+###Downloads per Episode 
+
+```{r, fig.height= 2.8, fig.width=6}
+ggplot(d_eps %>% filter(show == "The United States of Anxiety")) +
+  labs(title = "Downloads per Episode. The United States of Anxiety",
+       x = "Episode Number") +
+  geom_bar(aes(x = ep_num,
+                y = downloads),
+           stat = "identity",
+           fill = "#33b7cc") +
+  geom_point(aes(x = ep_num,
+                y = downloads),
+            color = "#ad0808",
+            size = 0.5) +
+  geom_line(aes(x = ep_num,
+                y = downloads),
+            color = "#ad0808") +
+  scale_x_continuous(breaks = seq(0,60,10)) +
+  my_theme
+```
+
+Row
+---------------------------------------
+###Episodes Over Time
+
+```{r}
+eps1 <- ggplot(d_day_week %>% filter(show == "The United States of Anxiety")) +
+  labs(title = "Episode Downloads Over Time. The United States of Anxiety",
+       x = "Date") +
+  geom_line(aes(x = index,
+                y = downloads,
+                color = story)) +
+  my_theme +
+  theme(legend.text = element_text(size = 1))
+
+
+ggplotly(eps1)
+
+```
+
+###Clients Over Time
+
+```{r}
+cl1 <- ggplot(d_week_client %>% filter(show == "The United States of Anxiety")) +
+  labs(title = "Client Downloads Over Time. The United States of Anxiety",
+       x = "Date") +
+  geom_line(aes(x = index,
+                y = downloads,
+                color = client)) +
+  geom_smooth(aes(x = index,
+                y = downloads,
+                color = client),
+              size = 0.5,
+              se = F,
+              linetype = "dashed") +
+  my_theme +
+  theme(legend.text = element_text(size = 8))
+
+
+ggplotly(cl1)
+
+```

@@ -1,0 +1,125 @@
+---
+title: "NYRH Apple Data Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, message=FALSE, error=FALSE, warning=FALSE)
+```
+
+```{r}
+#load Packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(plotly)
+library(stringr)
+library(lubridate)
+library(zoo)
+library(purrr)
+library(gtools)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+
+```
+
+
+```{r}
+#Functions
+
+##0-1 normalization 
+scalar1 <- function(x) {x / sqrt(sum(x^2))}
+
+#not in
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+```
+
+
+```{r}
+#read data
+####################################################################
+####You need some of the sets created on PodForecastEpisodes.rmd####
+####################################################################
+apple <- read.csv("apple.csv")
+apple$date_index <- as.Date(apple$date_index)
+```
+
+#New Subscribers
+
+Apple's data dump only has information on new subsriber each week. A slight de-acceleration has a pattern of recovery.
+
+
+```{r}
+ggplot(apple %>% filter(show == "The New Yorker Radio Hour") %>% 
+         filter(!is.na(subs)),
+       aes(x = date_index,
+           y = subs)) +
+  labs(title = "New Subscribers Per Week on Apple Podcasts. The New Yorker Radio Hour.",
+       x = "Week",
+       y = "New Subscribers") +
+  geom_line(color = "#088cd8") +
+  stat_smooth()+
+  my_theme
+  
+```
+
+```{r}
+ggplot(apple %>% filter(show == "The New Yorker Radio Hour") %>% 
+         filter(!is.na(subs),
+                date_index > as.Date("2017-01-02")),
+       aes(x = date_index,
+           y = subs)) +
+  labs(title = "New Subscribers Per Week on Apple Podcasts. The New Yorker Radio Hour. 2017.",
+       x = "Week",
+       y = "New Subscribers") +
+  geom_line(color = "#088cd8") +
+  stat_smooth() +
+  my_theme
+```
+
+```{r}
+ggplot(apple %>% filter(show == "The New Yorker Radio Hour") %>% 
+         filter(!is.na(subs)) %>% 
+         mutate(ravg = cumsum(subs) / row_number()),
+       aes(x = date_index,
+           y = ravg)) +
+  labs(title = "New Subscribers. Apple Podcasts. Rolling Average. The New Yorker Radio Hour.",
+       x = "Week",
+       y = "New Subscribers. Rolling Average") +
+  geom_line(color = "#088cd8") +
+  my_theme
+  
+```
+
+```{r}
+apple_gathered <- gather(apple, var, n, 6:9)
+ggplot(apple_gathered %>%
+         filter(show == "The New Yorker Radio Hour") %>% 
+         filter(!is.na(n),
+                var != "subs"),
+       aes(x = date_index, 
+           y = n)) +
+  labs(title = "Type of Download on Apple Podcasts. The New Yorker Radio Hour.",
+       x = "Week",
+       y = "Downloads",
+       color = "") +
+  geom_line(aes(color = var)) + 
+  stat_smooth(aes(color = var),
+              size = 0.5,
+              se = F,
+              linetype = "dashed") +
+  my_theme +
+  theme(legend.key = element_rect(fill = "white"),
+        legend.position = c(0.15,0.77))
+
+```
+

@@ -1,0 +1,60 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(rjson)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+```
+
+```{r}
+rm(list = ls())
+d <- fromJSON(file ="8_3_18_users.json")
+
+users <- as.data.frame(rep(NA, length(d$Users)))
+for(i in seq(length(d$Users))){
+  users[["create_date"]][i] <- d$Users[[i]]$UserCreateDate
+  }
+users <- users %>% select(create_date)
+users$create_date <- as.Date(gsub("T.*", "", users$create_date),
+                             format = "%Y-%m-%d")
+
+users %>% group_by(month = month(create_date), year = year(create_date)) %>%
+  summarise(signups = length(create_date)) %>% 
+  arrange(desc(year), desc(month))
+
+```
+
+```{r}
+#full parsing worsjopping
+users <- as.data.frame(rep(NA, length(d$Users)))
+for(i in seq(length(d$Users))){
+  users[["create_date"]][i] <- d$Users[[i]]$UserCreateDate}
+  print(paste(i, "date create ok"))
+  for(j in seq(length(d$Users[[i]]$Attributes))){
+    print(paste(i,"---", j))
+    users[[paste(j)]][i] <- d$Users[[i]]$Attributes[[j]]$Value
+  }
+}
+
+k <- list()
+n <- 1
+for(i in seq(length(d$Users))){
+  for(j in seq(length(d$Users[[i]]$Attributes))){
+    k[n] <- d$Users[[i]]$Attributes[[j]]$Name
+    n <- n + 1
+  }
+}
+
+
+for(i in seq(length(d$Users))){
+  
+  }
+
+a <- data.frame(a = unlist(k))
+
+gsub("T.*", "", users[1:50,2])
+```

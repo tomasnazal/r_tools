@@ -1,0 +1,99 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(dplyr)
+library(quanteda)
+library(tm)
+library(wordcloud)
+library(data.table)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Define Functions
+
+##Space Cleaning Function
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+removeSpecialChars <- function(x) gsub("[^a-zA-Z0-9 ]","",x)
+
+#Makes Wordclouds from character vectors
+wcfromvector <-  function(textvector, wcwords, user_stp_words = NA, grams = 1,
+                          minscale = 4,maxscale = .5){
+  #Text as corpus
+  corpus <- Corpus(VectorSource(paste(textvector, collapse = " ")))
+  #Clean Whitespace
+  corpus <- tm_map(corpus, toSpace, "/")
+  corpus <- tm_map(corpus, toSpace, "@")
+  corpus <- tm_map(corpus, toSpace, "\\|")
+  # Convert the text to lower case
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  # Remove numbers
+  corpus <- tm_map(corpus, removeNumbers)
+  # Remove non-alphanumerical
+  corpus <- tm_map(corpus, removeSpecialChars)
+  # Remove english common stopwords
+  corpus <- tm_map(corpus, removeWords, stopwords("english"))
+  # specify your stopwords as a character vector
+  corpus <- tm_map(corpus, removeWords, user_stp_words) 
+  # Remove punctuations
+  corpus <- tm_map(corpus, removePunctuation)
+  # Eliminate extra white spaces
+  corpus <- tm_map(corpus, stripWhitespace)
+  #Document Term matrix
+  # dtm <- TermDocumentMatrix(corpus)
+  # m <- as.matrix(dtm)
+  # v <- sort(rowSums(m),decreasing=TRUE)
+  # d <- data.frame(word = names(v),freq=v)
+  d <- corpus %>% 
+  unlist() %>%  
+  tokens() %>%
+  tokens_ngrams(grams, concatenator = " ") %>%  
+  unlist() %>%  
+  as.data.frame() %>% 
+  group_by_(".") %>%  
+  summarize(cnt=n()) %>%
+  arrange(desc(cnt))
+  #Make Wordcloud
+  set.seed(1234)
+  wordcloud(words = d$., freq = d$cnt, min.freq = 1, scale = c(minscale,maxscale),
+            max.words=wcwords, random.order=FALSE, rot.per=0, 
+            colors=brewer.pal(8, "Dark2"))
+}
+```
+
+```{r}
+rl <- fread("rlresponses1.csv")
+rl2 <- fread("rlresponses2.csv")
+```
+
+
+```{r}
+wcfromvector(rl$Body, 100, user_stp_words = c("can",
+                                              "yiv",
+                                              "\"",
+                                              "hi"), grams = 1)
+```
+
+```{r}
+wcfromvector(rl$Body, 30, user_stp_words = c("can",
+                                              "yiv",
+                                              "\"",
+                                              "hi",
+                                             "' m"), grams = 2, minscale = 3,
+             maxscale = .2)
+```
+
+
+```{r}
+wcfromvector(rl2$message, 100, grams = 1)
+```
+
+```{r}
+wcfromvector(rl2$message, 40, grams = 2, maxscale = .2, minscale = 3.5)
+```
+
+
+```{r}
+wcfromvector(rl2$message, 40, grams = 3, maxscale = .2, minscale = 2.5)
+```

@@ -1,0 +1,256 @@
+
+overlaps <- function(data, set_objects, sets, periods){
+  
+  
+  #list of unique listeners hashes to generate boolean matrix
+  hash_list <- list(unique(set_objects))
+  match_list <- list()  
+  
+  #for loop iterates for show and month. checks if unique 
+  #lisener hashes are in a particular show/month 
+  for(i in unique(sets)){
+    show_listeners <- data %>% filter(show == i)
+    for(mo in unique(periods)){
+      show_listeners_l <- show_listeners %>%
+        filter(month == mo) %>% pull(listeners)
+      match_list[[glue("{i}_{mo}")]] <- hash_list[[1]] %in% show_listeners_l
+    }
+  }
+  overlaps <- as.data.frame(match_list)
+  overlaps <- overlaps %>% mutate_all(funs(as.numeric(.)))
+  
+  }
+
+  #for loop iterates for show and month. checks if unique 
+  #lisener hashes are in a particular show/month 
+  for(i in unique(sets)){
+    show_listeners <- data %>% filter(show == i)
+    for(mo in unique(periods)){
+      show_listeners_l <- show_listeners %>%
+        filter(month == mo) %>% pull(listeners)
+      match_list[[glue("{i}_{mo}")]] <- hash_list[[1]] %in% show_listeners_l
+    }
+  }
+  overlaps <- as.data.frame(match_list)
+  overlaps <- overlaps %>% mutate_all(funs(as.numeric(.)))
+  
+  #each month data into a df list
+  overlaps_list <- list()
+  for(i in unique(periods)){
+    overlaps_list[[month.name[i]]] <- overlaps[,c(grep(i,
+                                                       colnames(overlaps)))]
+  }
+  
+  #Total unique listeners per show
+  for(i in unique(periods)){
+    overlaps_list[[glue("total_uniques_{month.name[i]}")]] <- 
+      data.frame(show = names(colSums(overlaps_list[month.name[i]][[1]])),
+                 listeners = colSums(overlaps_list[month.name[i]][[1]]))
+  }
+  rm(hash_list, match_list, show_listeners, show_listeners_l, overlaps, data, i, mo)
+  
+  #Total unique listeners per show
+  for(i in unique(periods)){
+    overlaps_list[[glue("total_uniques_{month.name[i]}")]] <- 
+      data.frame(show = names(colSums(overlaps_list[month.name[i]][[1]])),
+                 listeners = colSums(overlaps_list[month.name[i]][[1]]))
+  }
+  rm(hash_list, match_list, show_listeners, show_listeners_l, overlaps, data, i, mo)
+
+
+  ```{r}
+library(glue)
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(mytools)
+library(gtable)
+library(egg)
+```
+
+
+
+
+
+```
+
+
+```{r, fig.height= 8, fig.width=13}
+# k <- overlaps %>% mutate_all(funs(as.numeric(.)))
+# upset(k[,c(grep("2", colnames(k)))] %>%
+#         select("Freakonomics" = !!names(.[1]),
+#                "Here's The Thing" = !!names(.[2]),
+#                "Radiolab" = !!names(.[3]),
+#                "Snap Judgement" = !!names(.[4]),
+#                "New Yorker Radio Hour" = !!names(.[5])),
+#       sets.x.label = "Unique Listeners",
+#       nsets = 5,
+#       order.by = "freq")
+
+```
+
+```{r} 
+#First row has all case Falses (these are the IDs not in the month selected)
+over_counts <- plyr::count(overlaps_list["April"][[1]]) %>%
+  slice(-1) %>% 
+  arrange(desc(freq))
+colnames(over_counts) <- gsub("_[0-9]", "",
+                              gsub("\\.", " ", colnames(over_counts)))
+#Matrix for matrix plot
+over_matrix <- as.data.frame(t(as.matrix(over_counts %>% select(-freq))))
+colnames(over_matrix) <- 1:ncol(over_matrix)
+over_matrix <- over_matrix %>%
+  mutate(show = rownames(.)) %>% 
+  gather(x, y_logic,1:ncol(over_matrix)) %>%
+  group_by(x) %>%
+  ungroup() %>% 
+  mutate(x = as.numeric(x))
+
+#For the segments of the matrix plot
+over_segments <- over_matrix %>%
+  group_by(x) %>%
+  filter(y_logic == T) %>%
+  summarise(y_end = min(show),
+            y_beg = max(show))
+
+#For the light grey background polygons
+over_background <- data.frame(show = seq(1,max(as.numeric(as.factor(over_matrix$show))),2))
+for(i in 1:length(over_background$show)){
+  k <- over_background$show[i]
+  over_background$y[i] <- list(c(k-0.5, k+0.5, k+0.5, k-0.5))
+  over_background$x[i] <- list(c(0.11, 0.11, max(over_matrix$x), max(over_matrix$x)))
+}
+over_background <- unnest(over_background)
+
+#For total listeners/unique listeners barplot
+over_totals <- overlaps_list["total_uniques_April"][[1]]
+over_totals$show <- gsub("_[0-9]", "",
+                         gsub("\\.", " ", over_totals$show))
+partials <- over_counts %>%
+  filter(rowSums(.) - freq == 1) %>%
+  mutate_at(1:ncol(over_counts[-grep("freq", colnames(over_counts))]),
+            funs(freq[which(. == 1)])) %>%
+  select(-freq) %>%
+  slice(1) %>%
+  t() %>%
+  as.data.frame()
+over_totals$uniques <- partials$V1
+over_totals$prop <- round(over_totals$uniques/over_totals$listeners, 2)
+rm(partials)
+
+
+```
+
+
+```{r}
+p_intersect <- 
+  ggplot(over_counts,
+         aes(x = row_number(desc(freq)),
+             y = freq)) +
+  labs(x = "",
+       y = "Intersection Size") +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = scales::comma(freq)),
+            size = 3,
+            angle = 45,
+            vjust = -0.5,
+            hjust = 0) +
+  scale_y_continuous(limits = c(0, 3200000))+
+  scale_x_continuous(limits = c(0.1,31)) +
+  my_theme +
+  theme(axis.ticks.x = element_blank(),
+        plot.margin=unit(c(0,0,-0.9,0), "cm"),
+        axis.text.x = element_blank()
+  )
+```
+
+```{r}
+p_matrix <- ggplot(over_matrix) +
+  labs(x = "", y = "") +
+  geom_point(aes(x = x,
+                 y = show,
+                 color = as.factor(y_logic)),
+             size = 2) +
+  geom_segment(aes(x = x, xend = x,
+                   y = y_beg, yend = y_end),
+               size = 1,
+               data = over_segments) +
+  scale_color_manual(values = c("grey", "black")) +
+  scale_x_continuous(limits = c(0.1,31)) +
+  my_theme +
+  theme(legend.position = "none",
+        #plot.margin=unit(c(-0.2,0,0,0), "cm"),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())
+```
+
+```{r}
+p_matrix <- ggplot(over_matrix) +
+  labs(x = "", y = "") +
+  geom_polygon(data = over_background,
+               aes(x = x,
+                   y = y,
+                   group = show),
+               fill = "gray96") +
+  geom_point(aes(x = x,
+                 y = as.numeric(as.factor(show)),
+                 color = as.factor(y_logic)),
+             size = 2) +
+  geom_segment(aes(x = x, xend = x,
+                   y = as.numeric(as.factor(y_beg)), yend = as.numeric(as.factor(y_end))),
+               size = 1,
+               data = over_segments) +
+  scale_color_manual(values = c("grey", "black")) +
+  scale_x_continuous(limits = c(0.1,31)) +
+  scale_y_continuous(breaks = 1:max(as.numeric(as.factor(over_matrix$show))),
+                     labels = levels(as.factor(over_matrix$show))) +
+  my_theme +
+  theme(legend.position = "none",
+        #plot.margin=unit(c(-0.2,0,0,0), "cm"),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())
+```
+
+```{r}
+p_totals <- ggplot(over_totals) +
+  geom_bar(aes(x = show,
+               y = listeners),
+           stat = "identity",
+           fill = "#444444") +
+  geom_bar(aes(x = show,
+               y = uniques),
+           stat = "identity",
+           fill = "#ba2727") +
+  geom_text(aes(x = show,
+                y = uniques/2,
+                label = paste0(prop * 100, "%")),
+            color = "white") +
+  my_theme
+
+p_totals
+```
+
+
+
+```{r}
+ggarrange(p_intersect, p_matrix, heights = c(4,1))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

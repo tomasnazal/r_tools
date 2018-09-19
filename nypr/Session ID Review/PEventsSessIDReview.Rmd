@@ -1,0 +1,468 @@
+---
+title: "Session ID Review"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#load Packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+library(lubridate)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#read data
+d <- read.csv("PlatformEvents.csv")
+d <- d %>% arrange(session_id, event_timestamp)
+d$event_timestamp <- as.POSIXct(d$event_timestamp)
+
+d2 <- read.csv("platform_events_sessions.csv")
+d2$max_timestamp <- as.POSIXct(d2$max_timestamp)
+d2$min_timestamp <- as.POSIXct(d2$min_timestamp)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#New Variables
+##last piece of session id
+d$sess_id_in_day <- as.numeric(str_extract(d$session_id, "[^_]*$"))
+##Action Type
+d$action_type <- ifelse(d$action %in% c('set_position', 'start', 'resume',
+                                        'skip_15_forward', 'skip_15_back'),
+                        'play',
+                        ifelse(d$action %in% c('finish', 'pause', 'window_close',
+                                               'interrupt'),
+                               'stop',
+                               ifelse(d$action == 'page_view',
+                                      'page_view', NA)))
+##day session variable
+d$day_session <- str_extract(d$session_id, "^(.*[_])")
+
+d2$sess_id_in_day <- as.numeric(str_extract(d2$session_id, "[^_]*$"))
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#sample
+d_small <- sample_n(d, 20000)
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+#
+session_id_summary <- d %>% group_by(session_id) %>%
+  dplyr::summarise(n_parts = max(session_part_id),
+            first_action = action[1],
+            first_action_type = action_type[1],
+            first_action_timestamp = event_timestamp[1],
+            last_action = action[length(session_id)],
+            last_action_type = action_type[length(session_id)],
+            last_action_timestamp = event_timestamp[length(session_id)],
+            last_action_in_day = sess_id_in_day[length(session_id)],
+            ses_len = difftime(event_timestamp[length(session_id)],
+                               event_timestamp[1], units = "mins"),
+            is_day_crossover = ifelse(last_action_in_day < 0, 1, 0)
+            #,
+            #n_user_ids = length(unique(user_id)),
+            #n_platf_event_id = length(unique(platform_events_id))
+            )
+session_id_summary$ses_len <- round(session_id_summary$ses_len, 3)
+```
+
+```{r}
+#Check odd first/last actions
+
+
+
+```
+
+##General
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(d %>% group_by(action) %>% 
+         count() %>% 
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(action = factor(action, levels = action))) +
+  labs(title = "Action Frequency") +
+  geom_bar(aes(x = action, y = n),
+           stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+Is it abnormal that 'set_position' has a higher frequency than 'start'?
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(d %>% group_by(action_type) %>% 
+         count() %>% 
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(action_type = factor(action_type,
+                                     levels = action_type))) +
+  labs(title = "Type of Action Frequency") +
+  geom_bar(aes(x = action_type, y = n),
+           stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+There are more 'play' than 'stop' actions in total. I don't really know if we were expecting there to be an equal amount; it would make sense, but there is probably a reason for this. 
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(d) +
+  labs(title = "Session ID in Day Identifier, Histogram.") +
+  geom_histogram(aes(x = sess_id_in_day),
+                 binwidth = 0.5,
+                 bins = 19) +
+  scale_x_continuous(breaks = c(-1:18)) +
+  my_theme
+```
+
+I think this looks good, the -1 identifiers are a relative minority. Most cases have only 1 or 2 sessions a day. I thought that the crossover identifiers could go to -n if the last session of the day was the nth and then crossed over. For the data, the min value of the identifier is -1.
+
+
+## Within Session ID
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary) +
+  labs(title = "Type of First Action. Frequency") +
+  geom_bar(aes(x = factor(first_action_type, levels = c("play", "page_view", "stop")))) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+First actions within Session ID are more often "stops" than "plays" 
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% 
+         group_by(first_action_type,
+                  first_action) %>% 
+         count() %>% 
+         arrange(first_action_type, desc(n)) %>%
+         ungroup() %>% 
+         mutate(first_action = factor(first_action,
+                                      levels = first_action))) +
+  labs(title = "First Action. Frequency") +
+  geom_bar(aes(x = first_action,
+               y = n,
+               fill = first_action_type),
+           stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+In dissaggregated first actions, "window_close" seems to be the most frequent after "page_view"
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary) +
+  labs(title = "Type of Last Action. Frequency") +
+  geom_bar(aes(x = last_action_type)) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% 
+         group_by(last_action_type,
+                  last_action) %>% 
+         count() %>% 
+         arrange(last_action_type, desc(n)) %>%
+         ungroup() %>% 
+         mutate(last_action = factor(last_action,
+                                      levels = last_action))) +
+  labs(title = "Last Action. Frequency") +
+  geom_bar(aes(x = last_action,
+               y = n,
+               fill = last_action_type),
+           stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% filter(ses_len < 50)) +
+  labs(title = "Session Length (< 50 mins) Histogram.",
+       x = "minutes") +
+  geom_histogram(aes(x = ses_len),
+                 binwidth = 1) +
+  scale_x_continuous(breaks = c(seq(0,50,5))) +
+  my_theme
+
+summary(as.numeric(session_id_summary$ses_len))
+```
+
+The wide majority of sessions last less than 3 minutes
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% filter(ses_len > 50)) +
+  labs(title = "Session Length (> 50 mins) Histogram.",
+       x = "minutes") +
+  geom_histogram(aes(x = ses_len),
+                 binwidth = 1) +
+  my_theme
+
+```
+
+A minority of cases lasts over 50 minutes, the most extreme session ID lasts about 45 hours
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% filter(ses_len <50) %>% 
+         group_by(first_action_type,
+                  first_action) %>% 
+         count() %>% 
+         arrange(first_action_type, desc(n)) %>%
+         ungroup() %>% 
+         mutate(first_action = factor(first_action,
+                                      levels = first_action))) +
+  labs(title = "Type of First Action (Session Length < 50 mins). Frequency") +
+  geom_bar(aes(x = first_action,
+               y = n,
+               fill = first_action_type),
+           stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% filter(ses_len >50) %>% 
+         group_by(first_action_type,
+                  first_action) %>% 
+         count() %>% 
+         arrange(first_action_type, desc(n)) %>%
+         ungroup() %>% 
+         mutate(first_action = factor(first_action,
+                                      levels = first_action))) +
+  labs(title = "Type of First Action (Session Length > 50 mins). Frequency") +
+  geom_bar(aes(x = first_action,
+               y = n,
+               fill = first_action_type),
+           stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% filter(ses_len <50) %>% 
+         group_by(last_action_type,
+                  last_action) %>% 
+         count() %>% 
+         arrange(last_action_type, desc(n)) %>%
+         ungroup() %>% 
+         mutate(last_action = factor(last_action,
+                                      levels = last_action))) +
+  labs(title = "Type of last Action (Session Length < 50 mins). Frequency") +
+  geom_bar(aes(x = last_action,
+               y = n,
+               fill = last_action_type),
+           stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% filter(ses_len >50) %>% 
+         group_by(last_action_type,
+                  last_action) %>% 
+         count() %>% 
+         arrange(last_action_type, desc(n)) %>%
+         ungroup() %>% 
+         mutate(last_action = factor(last_action,
+                                      levels = last_action))) +
+  labs(title = "Type of last Action (Session Length > 50 mins). Frequency") +
+  geom_bar(aes(x = last_action,
+               y = n,
+               fill = last_action_type),
+           stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+
+##Crossover vs not 
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% 
+         mutate(is_day_crossover = ifelse(is_day_crossover == 1, "crossover", "not_crossover"))) +
+  labs(title = "Type of First Action. By Crossover. Frequency") +
+  geom_bar(aes(x = first_action_type)) +
+  facet_wrap(~is_day_crossover, scales = "free_y") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% 
+         mutate(is_day_crossover = ifelse(is_day_crossover == 1, "crossover", "not_crossover"))) +
+  labs(title = "Type of Last Action. By Crossover. Frequency") +
+  geom_bar(aes(x = last_action_type)) +
+  facet_wrap(~is_day_crossover, scales = "free_y") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+
+#Above 1 Minute Duration Sessions 
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% filter(ses_len > 1)) +
+  labs(title = "Type of First Action. Frequency") +
+  geom_bar(aes(x = factor(first_action_type, levels = c("play", "page_view", "stop")))) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% filter(ses_len > 1) %>% 
+         group_by(first_action_type,
+                  first_action) %>% 
+         count() %>% 
+         arrange(first_action_type, desc(n)) %>%
+         ungroup() %>% 
+         mutate(first_action = factor(first_action,
+                                      levels = first_action))) +
+  labs(title = "First Action. Frequency") +
+  geom_bar(aes(x = first_action,
+               y = n,
+               fill = first_action_type),
+           stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>% filter(ses_len > 1)) +
+  labs(title = "Type of Last Action. Frequency") +
+  geom_bar(aes(x = factor(last_action_type, levels = c("play", "page_view", "stop")))) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>%  filter(ses_len > 1) %>% 
+         group_by(last_action_type,
+                  last_action) %>% 
+         count() %>% 
+         arrange(last_action_type, desc(n)) %>%
+         ungroup() %>% 
+         mutate(last_action = factor(last_action,
+                                      levels = last_action))) +
+  labs(title = "Last Action. Frequency") +
+  geom_bar(aes(x = last_action,
+               y = n,
+               fill = last_action_type),
+           stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+###Crossover vs not 
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary %>%  filter(ses_len > 1) %>% 
+         mutate(is_day_crossover = ifelse(is_day_crossover == 1, "crossover", "not_crossover"))) +
+  labs(title = "Type of First Action. By Crossover. Frequency") +
+  geom_bar(aes(x = first_action_type)) +
+  facet_wrap(~is_day_crossover, scales = "free_y") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+ggplot(session_id_summary%>%  filter(ses_len > 1) %>% 
+         mutate(is_day_crossover = ifelse(is_day_crossover == 1, "crossover", "not_crossover"))) +
+  labs(title = "Type of Last Action. By Crossover. Frequency") +
+  geom_bar(aes(x = last_action_type)) +
+  facet_wrap(~is_day_crossover, scales = "free_y") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+```
+
+```{r}
+summary(as.numeric((session_id_summary %>% filter(is_day_crossover == 1))$ses_len))
+```
+
+#Aggregate Data
+
+```{r}
+#make duration variable 
+d2$duration <- difftime(d2$min_timestamp, d2$max_timestamp, units = "mins")
+
+ggplot(d2 %>% filter(duration < 100))+
+  geom_histogram(aes(x = duration),
+                     binwith = 1,
+                     bins = 300) +
+  my_theme
+```
+
+```{r}
+summary(as.numeric(d2$duration))
+summary(as.numeric(session_id_summary$ses_len))
+```
+
+
+
+#Checking 0 Length cases 
+
+```{r}
+nrow(session_id_summary %>% filter(ses_len != 0)) /
+  nrow(session_id_summary %>% filter(ses_len == 0))
+
+```
+
+```{r}
+nrow(d2 %>% filter(duration != 0)) /
+  nrow(d2 %>% filter(duration == 0))
+
+```
+
+
+
+
+
+
+
+
+
+

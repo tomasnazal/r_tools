@@ -1,0 +1,36 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+```
+
+
+```{r}
+a <- read.csv("scratch - Sheet1.csv")
+a <- gather(a, var, n, 2:3)
+a$n <- as.numeric(gsub(",", "", a$n))
+a <- a %>% group_by(var) %>% mutate(round(perc = n / sum(n) * 100, 2))
+
+
+d <- read.csv("devices.csv")
+```
+
+
+```{r}
+ggplot(a) + 
+  labs(title = "Percentage of Livestream KPIs by Client. Past Year.",
+       x = "Client") +
+  geom_bar(aes(x = substr(client, 1, 9), y = perc), stat = "identity") +
+  geom_text(aes(x = substr(client, 1, 9), y = perc, label = paste(perc, "%", sep = "")),
+            size = 3,
+            nudge_y = 5) +
+  facet_wrap(~var, nrow = 2) + 
+  theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```

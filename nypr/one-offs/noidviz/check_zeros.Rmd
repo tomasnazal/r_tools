@@ -1,0 +1,450 @@
+---
+title: "Missing show_id Exploration"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, message=FALSE, error=FALSE, warning=FALSE)
+```
+
+
+```{r}
+#load Packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+library(lubridate)
+library(zoo)
+library(purrr)
+library(gtools)
+library(gridExtra)
+```
+
+```{r}
+#Graphs theme
+my_theme <- theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank())
+```
+
+
+```{r}
+#Functions
+
+##0-1 normalization 
+scalar1 <- function(x) {x / sqrt(sum(x^2))}
+
+#not in
+'%!in%' <- function(x,y)!('%in%'(x,y))
+```
+
+
+```{r}
+zeros_story <- read.csv("story_showid0.csv")
+zeros_story$story_type_id <- ifelse(zeros_story$story_type_id == 26, "article",
+                                    ifelse(zeros_story$story_type_id == 160, "npr_article", NA))
+
+
+
+zeros_story$filepath <- trimws(zeros_story$filepath)
+zeros_story$filepath <- gsub(pattern = "//", "/", zeros_story$filepath)
+zeros_story$filepath <- ifelse(zeros_story$filepath %in% c("", " ", "\t"), NA, zeros_story$filepath)
+zeros_story$filepath_simp <- ifelse(is.na(zeros_story$filepath), NA,
+                                    ifelse(!grepl(pattern = "/", x = zeros_story$filepath),
+                                           "root_directory_mp3",
+                                           ifelse(grepl(pattern = "/", x = zeros_story$filepath),
+                                                  str_extract(as.character(zeros_story$filepath), "^(.*)/"),
+                                                  "other_filepath_condition")))
+```
+
+
+```{r}
+zeros_ondemand <- read.csv("on_demand_showid0.csv")
+
+#filepath root
+zeros_ondemand$raw_request <- trimws(zeros_ondemand$raw_request)
+zeros_ondemand$raw_request <- gsub(pattern = "//", "/", zeros_ondemand$raw_request)
+zeros_ondemand$raw_request <- ifelse(zeros_ondemand$raw_request %in% c("", " ", "\t"), NA, zeros_ondemand$raw_request)
+zeros_ondemand$filepath_simp <- ifelse(is.na(zeros_ondemand$raw_request), NA,
+                                    ifelse(!grepl(pattern = "/", x = zeros_ondemand$raw_request),
+                                           "root_directory_mp3",
+                                           ifelse(grepl(pattern = "/", x = zeros_ondemand$raw_request),
+                                                  str_extract(as.character(zeros_ondemand$raw_request), "^(.*)/"),
+                                                  "other_filepath_condition")))
+
+
+#agent root
+zeros_ondemand$raw_agent <- trimws(zeros_ondemand$raw_agent)
+zeros_ondemand$raw_agent <- gsub(pattern = "//", "/", zeros_ondemand$raw_agent)
+zeros_ondemand$raw_agent <- ifelse(zeros_ondemand$raw_agent %in% c("", " ", "\t"), NA, zeros_ondemand$raw_agent)
+zeros_ondemand$agent_simp <- ifelse(is.na(zeros_ondemand$raw_agent), NA,
+                                    ifelse(!grepl(pattern = "/", x = zeros_ondemand$raw_agent),
+                                           str_extract(as.character(zeros_ondemand$raw_agent), "[^ |^-]+"),
+                                           ifelse(grepl(pattern = "/", x = zeros_ondemand$raw_agent),
+                                                  str_extract(as.character(zeros_ondemand$raw_agent), "[^/]+"),
+                                                  "other_agent_condition")))
+zeros_ondemand$agent_simp <- str_extract(as.character(zeros_ondemand$agent_simp), "[^ ]+")
+
+#show, story id 0 flags
+zeros_ondemand$zero_show <- ifelse(zeros_ondemand$show_id == 0, "show_id = 0", "show_id != 0")
+zeros_ondemand$zero_story <- ifelse(zeros_ondemand$story_id == 0, "story_id = 0", "story_id != 0")
+zeros_ondemand$type <- ifelse(zeros_ondemand$zero_show == "show_id = 0" &
+                                zeros_ondemand$zero_story == "story_id = 0", "show_id = 0 & story_id = 0",
+                              ifelse(zeros_ondemand$zero_show == "show_id = 0" &
+                                       zeros_ondemand$zero_story == "story_id != 0", "show_id = 0",
+                                     ifelse(zeros_ondemand$zero_show == "show_id != 0" &
+                                         zeros_ondemand$zero_story == "story_id = 0", "story_id = 0", NA)))
+
+zeros_ondemand$type <- factor(zeros_ondemand$type, levels = c("show_id = 0 & story_id = 0",
+                                                              "show_id = 0",
+                                                              "story_id = 0"))
+
+```
+
+
+
+#Story Table
+
+* All no show_id cases are of one of two types: 
+    + article
+    + npr_article
+
+<br>
+<br>
+
+###Root Directoy of show_id == 0 Cases
+
+<br>
+
+```{r, fig.height=10, fig.width= 7}
+grid.arrange(ggplot(zeros_story %>%
+         filter(story_type_id == "article") %>% 
+         group_by(filepath_simp) %>%
+         count() %>%
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(rank = row_number()) %>%
+         filter(rank < 21) %>% 
+         mutate(filepath_simp = factor(filepath_simp, levels = filepath_simp))) +
+  labs(title = '"article"',
+       x = "") +
+  geom_bar(aes(x = filepath_simp,
+               y = n), stat = "identity") +
+  my_theme +
+  theme(title = element_text(size = 8),
+        axis.text.x = element_text(angle = 45,
+                                   hjust = 1)),
+  ggplot(zeros_story %>%
+         filter(story_type_id == "npr_article") %>% 
+         group_by(filepath_simp) %>%
+         count() %>%
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(rank = row_number()) %>%
+         filter(rank < 21) %>% 
+         mutate(filepath_simp = factor(filepath_simp, levels = filepath_simp))) +
+  labs(title = '"npr_article"',
+       x = "") +
+  geom_bar(aes(x = filepath_simp,
+               y = n), stat = "identity") +
+  my_theme +
+  theme(title = element_text(size = 8),
+        axis.text.x = element_text(angle = 45,
+                                   hjust = 1)),
+  
+   top =  "Story Table, show_id == 0, Distribution of Root Directories. Top 20 by Story Type.")
+  
+  
+```
+
+* Most cases have no directory (NA). For "article" type stories, news, archives, and bbc summaries are the most common. "Root_directory_mp3" are the files whose filepath was just the root, most of these files start with "SM", "news, or "bl".  For "npr_article" type stories, the most common roots associated with no show_id cases are numeric paths. I don't know what these files are.
+
+<br>
+<br>
+
+###First Published Date 
+
+<br>
+
+```{r}
+ggplot(zeros_story) +
+  labs(title = "First Published Date, Histogram. By Story Type") +
+  geom_histogram(aes(x = as.POSIXct(first_publish_date))) + 
+  facet_wrap(~story_type_id, nrow = 2, scales = "free") +
+  my_theme
+```
+
+* Article-type stories have cases first published back in 1975, with a cluster right after 2010. npr_article-type stories are concentrated in relatively even densities between 2013 and 2017.
+
+
+```{r}
+ggplot(zeros_story %>% filter(story_type_id == "article",
+                              as.POSIXct(first_publish_date) >= 
+                                as.POSIXct("2010-01-01"))) +
+  labs(title = "First Published Date, Histogram. Article story_type, Closeup") +
+  geom_histogram(aes(x = as.POSIXct(first_publish_date))) +
+  my_theme
+```
+
+* The cluster in article-type stories happens for stories published first somewhere in the middle of 2010.
+
+<br>
+<br>
+
+###News Date 
+
+<br>
+
+```{r}
+ggplot(zeros_story) +
+  labs(title = "News Date, Histogram. By Story Type") +
+  geom_histogram(aes(x = as.POSIXct(news_date))) + 
+  facet_wrap(~story_type_id, nrow = 2, scales = "free") +
+  my_theme
+```
+
+* Article-type stories have cases with news_date 1900 (minimum possible perhaps?), with a cluster right after 2010. npr_article-type stories are concentrated in relatively even densities between 2013 and 2017.
+
+
+```{r}
+ggplot(zeros_story %>% filter(story_type_id == "article",
+                              as.POSIXct(news_date) >= 
+                                as.POSIXct("2000-01-01"))) +
+  labs(title = "News Date, Histogram. Article story_type Closeup") +
+  geom_histogram(aes(x = as.POSIXct(news_date))) +
+  my_theme
+```
+
+* Looking closer, the cluster in article-type stories happens for stories published first somewhere in the middle of 2010, again.
+
+<br>
+<br>
+<br>
+
+
+#On Demand Table
+
+<br>
+
+Contingency Table
+```{r}
+prop.table(table(zeros_ondemand$zero_show, zeros_ondemand$zero_story))
+```
+
+* I queried for either no show or story id. There are more that don't have either than other combinations. There are more files with show ID but no story ID than files with story ID but no show ID.
+
+<br>
+<br>
+
+###Root Directoy of Requests
+
+<br>
+
+```{r, fig.height=10, fig.width= 7}
+grid.arrange(ggplot(zeros_ondemand %>%
+         filter(type == "show_id = 0 & story_id = 0") %>% 
+         group_by(filepath_simp) %>%
+         count() %>%
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(rank = row_number()) %>%
+         filter(rank < 21) %>% 
+         mutate(filepath_simp = factor(filepath_simp, levels = filepath_simp))) +
+  labs(title = '"show_id = 0 & story_id = 0"',
+       x = "") +
+  geom_bar(aes(x = filepath_simp,
+               y = n), stat = "identity") +
+  my_theme +
+  theme(title = element_text(size = 8),
+        axis.text.x = element_text(angle = 45,
+                                   hjust = 1)),
+  ggplot(zeros_ondemand %>%
+         filter(type == "show_id = 0") %>% 
+         group_by(filepath_simp) %>%
+         count() %>%
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(rank = row_number()) %>%
+         filter(rank < 21) %>% 
+         mutate(filepath_simp = factor(filepath_simp, levels = filepath_simp))) +
+  labs(title = '"show_id = 0"',
+       x = "") +
+  geom_bar(aes(x = filepath_simp,
+               y = n), stat = "identity") +
+  my_theme +
+  theme(title = element_text(size = 8),
+        axis.text.x = element_text(angle = 45,
+                                   hjust = 1)),
+  
+  ggplot(zeros_ondemand %>%
+         filter(type == "story_id = 0") %>% 
+         group_by(filepath_simp) %>%
+         count() %>%
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(rank = row_number()) %>%
+         filter(rank < 21) %>% 
+         mutate(filepath_simp = factor(filepath_simp, levels = filepath_simp))) +
+  labs(title = '"story_id = 0"',
+       x = "") +
+  geom_bar(aes(x = filepath_simp,
+               y = n), stat = "identity") +
+  my_theme +
+  theme(title = element_text(size = 8),
+        axis.text.x = element_text(angle = 45,
+                                   hjust = 1)),
+
+  
+   top =  "Ondemand Table, Distribution of File Root Directories. Top 20 by Missingness Type.")
+  
+  
+```
+
+* Requests done for files with **no show or story ID** are mostly streambumpers (which are filtered out by the PDT), followed by wqxr_ondemand, Radiolab Extras, culture, and archives. **There are many WQXR folders here ** 
+* Requests done for files with **no show ID only** are mostly **Radiolab** directories, followed by wqxr, archives, and culture. 
+* Requests done for files with **no story ID** only are all **News** of some sort.
+
+
+<br>
+<br>
+
+
+###Agent of  Requests
+
+<br>
+
+*Simplified agent request, not perfect.* 
+
+```{r, fig.height=10, fig.width= 7}
+grid.arrange(ggplot(zeros_ondemand %>%
+         filter(type == "show_id = 0 & story_id = 0") %>% 
+         group_by(agent_simp) %>%
+         count() %>%
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(rank = row_number()) %>%
+         filter(rank < 21) %>% 
+         mutate(agent_simp = factor(agent_simp, levels = agent_simp))) +
+  labs(title = '"show_id = 0 & story_id = 0"',
+       x = "") +
+  geom_bar(aes(x = agent_simp,
+               y = n), stat = "identity") +
+  my_theme +
+  theme(title = element_text(size = 8),
+        axis.text.x = element_text(angle = 45,
+                                   hjust = 1)),
+  ggplot(zeros_ondemand %>%
+         filter(type == "show_id = 0") %>% 
+         group_by(agent_simp) %>%
+         count() %>%
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(rank = row_number()) %>%
+         filter(rank < 21) %>% 
+         mutate(agent_simp = factor(agent_simp, levels = agent_simp))) +
+  labs(title = '"show_id = 0"',
+       x = "") +
+  geom_bar(aes(x = agent_simp,
+               y = n), stat = "identity") +
+  my_theme +
+  theme(title = element_text(size = 8),
+        axis.text.x = element_text(angle = 45,
+                                   hjust = 1)),
+  
+  ggplot(zeros_ondemand %>%
+         filter(type == "story_id = 0") %>% 
+         group_by(agent_simp) %>%
+         count() %>%
+         arrange(desc(n)) %>%
+         ungroup() %>% 
+         mutate(rank = row_number()) %>%
+         filter(rank < 21) %>% 
+         mutate(agent_simp = factor(agent_simp, levels = agent_simp))) +
+  labs(title = '"story_id = 0"',
+       x = "") +
+  geom_bar(aes(x = agent_simp,
+               y = n), stat = "identity") +
+  my_theme +
+  theme(title = element_text(size = 8),
+        axis.text.x = element_text(angle = 45,
+                                   hjust = 1)),
+
+  
+   top =  "Ondemand Table, Distribution of Agent requests. Top 20 by Missingness Type.")
+  
+  
+```
+
+
+
+
+
+* Requests done for files with **no show or story ID** are overwhelmingly by **Mozilla** clients, followed by **VLC**, WQXR, and Applecoremedia. 
+* Requests done for files with **no show ID only** are mostly by **Mozilla** clients again, I don't know what **okhttp** is, for what I understand Dalvik is a Google Android VM for app execution. 
+* Requests done for files with **no story ID only** are mostly by **Dalvik** and **WNYC** clients, followed by okhttp, and Mozilla. Perhaps the Davlik thing is coming from un-updated phones or apps?
+
+
+<br>
+<br>
+
+###Listen Timestamp 
+
+<br>
+
+```{r, fig.height=9, fig.width= 7}
+ggplot(zeros_ondemand) +
+  labs(title = "Listen Timestamp, Histogram. By by Missingness Type") +
+  geom_histogram(aes(x = as.POSIXct(listen_timestamp))) + 
+  facet_wrap(~type, nrow = 3, scales = "free") +
+  my_theme
+```
+
+* Requests done for files with **no show or story ID** started happening mostly since ~October of 2016, where there is a noticeable uptick.
+* Requests done for files with **no show ID only** have been decreasing since 2016, where the majority of cases concentrate.
+* Requests done for files with **no story ID** seem to be more evenly distributed, with a cluster in the last half of 2016, right behind the no show or story id uptick. Though it would look like these types of downloads have decreased, the earlier files have had more time to accrue downloads. 
+
+
+<br>
+<br>
+
+###Seconds Downloaded 
+
+<br>
+
+```{r, fig.height=9, fig.width= 7}
+ggplot(zeros_ondemand %>% filter(seconds_downloaded < 10)) +
+  labs(title = "Seconds Downloaded, Histogram. By by Missingness Type. < 10 mins") +
+  geom_histogram(aes(x = seconds_downloaded)) + 
+  facet_wrap(~type, nrow = 3, scales = "free") +
+  my_theme
+```
+
+* Requests done for files with **no show ID only** have **longer downloads** than the others; perhaps because they're mostly **Radiolab** files. Requests done for files with no show or story ID tend to be shorter (remember that these are mostly streambumpers).
+
+
+<br>
+<br>
+
+###Bytesize of File  
+
+<br>
+
+```{r, fig.height=9, fig.width= 7}
+ggplot(zeros_ondemand) +
+  labs(title = "File Byte Size, Histogram. By by Missingness Type.") +
+  geom_histogram(aes(x = file_size_bytes)) + 
+  facet_wrap(~type, nrow = 3, scales = "free") +
+  my_theme
+```
+
+* Most files are rather small. Requests done for files with **no show ID only** have larger files and a conspicuous **bump after 50 MB.** Given that Radiolab was highly represented in this group, **could these by video uploads?**
+
+<br>
+<br>
+<br>
+<br>

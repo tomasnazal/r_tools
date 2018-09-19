@@ -1,0 +1,296 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(mytools)
+library(ggrepel)
+library(lme4)
+library(jtools)
+```
+
+```{r}
+rm(list = ls())
+```
+
+```{r}
+d <- fread("studios_ep_day.csv")
+colnames(d) <- c("download_date", "show", "story", "publish_date", "downloads")
+d <- d %>% select(show, story, publish_date, download_date, downloads)
+d <- mutate_at(d, grep("date", colnames(d)),
+               function(x) as.Date(x, format = "%Y-%m-%d")) %>% 
+  group_by(show, story) %>% arrange(show, publish_date, story, download_date) %>% 
+  mutate(ep_day_n = row_number(),
+         downloads = as.numeric(gsub(",", "", downloads)))
+
+
+#real Story start date
+d <- d %>%
+  group_by(show, story) %>% 
+  mutate(story_start_date1 = min(download_date))
+
+temp <- d %>% group_by(show, story) %>%
+  summarise(n_sdates = n_distinct(publish_date),
+            publish_date = min(publish_date),
+            story_start_date1 = min(story_start_date1),
+            timediff = difftime(story_start_date1, publish_date),
+            orig_dls = ifelse(length(which(download_date == min(publish_date))) == 0, NA,
+                              downloads[which(download_date == min(publish_date))]),
+            new_dls = downloads[which(download_date == story_start_date1[1])][1]) %>%
+  mutate(story_start_date_real =  if_else(is.na(orig_dls) | n_sdates > 1, story_start_date1,
+                                  publish_date)) %>% 
+  filter(timediff != 0 |
+         n_sdates > 1)
+
+d <- d %>%
+  left_join(temp %>% select(show, story, story_start_date_real)) %>% 
+  mutate(publish_date = as.Date(if_else(!is.na(story_start_date_real),
+                                   story_start_date_real,
+                                   publish_date))) %>% 
+  select(-story_start_date_real,
+         story_start_date1 )
+rm(temp)
+```
+
+```{r, fig.height=7, fig.width=14}
+a <- d %>% group_by(show, story) %>%
+  filter(download_date <= publish_date + 30) %>% 
+  summarise(publish_date = as.Date(min(publish_date)),
+            dls = sum(downloads)) %>%
+  arrange(show, publish_date) %>% 
+  mutate(lag_day_1 = as.numeric(publish_date - lag(publish_date)),
+         lag_day_2 = as.numeric(publish_date - lag(publish_date, 2)),
+         lag_day_3 = as.numeric(publish_date - lag(publish_date, 3)),
+         dls_lag_1 = lag(dls),
+         dls_lag_2 = lag(dls, 2),
+         weekday = weekdays(publish_date),
+         mean_distance = round(dls - mean(dls),0)) %>% 
+  ungroup() %>%
+  mutate(publish_month = month.abb[month(publish_date)],
+         publish_year = as.factor(year(publish_date))) %>% 
+  group_by(show) %>%
+  mutate(ref = mean(lag_day_1, na.rm = T),
+    z_score = (lag_day_1-mean(lag_day_1, na.rm = T)) /sd(lag_day_1, na.rm = T)) %>% 
+  filter(lag_day_1 < 20)
+``` 
+
+```{r}
+#Check short distance episodes
+kr <- a %>% group_by(lag_day_1) %>% count()
+
+krk <- a %>% filter(lag_day_1 <=2)
+
+```
+
+```{r}
+a <- a%>% ungroup() %>% 
+ # mutate(weekday = as.factor(weekdays(publish_date)))
+  mutate(weekday = relevel(as.factor(weekdays(publish_date)), "Monday"),
+         publish_month = relevel(as.factor(publish_month), "Jan")) %>% 
+  filter(show != "The Takeaway")
+```
+
+```{r}
+hist(a$lag_day_1, 20, main = "Episode Distance. Studios.")
+```
+
+```{r}
+hist(a$dls, 200, main = "Episode Downloads. Studios.")
+```
+
+
+
+```{r}
+for(i in unique(a$show)){
+  print(ggplot(a  %>% filter(publish_date > "2016-03-01",
+           show == i,
+           lag_day_1 < 15),
+         aes(x = publish_date, y = dls)) +
+    geom_line(aes(color = lead(lag_day_1)),
+              size = 2) +
+    geom_text_repel(aes(label = strtrim(story, 20)),
+              angle = 90,
+              size = 3,
+              direction = "y") +
+    scale_color_continuous(high = "#2f79ef",
+                           low = "#d11f1f") +
+    theme(axis.text.x = element_text(angle = 45)) +
+    my_theme +
+    theme(legend.position = "bottom"))
+ # ggsave(paste0(i, ".png"))
+  
+}
+```
+
+
+
+
+```{r, fig.height=7, fig.width=10}
+ggplot(a, aes(x = lag_day_1,
+              y = dls)) +
+  labs(title = "Distance From Previous Episode and Downloads. Studios (w/o The Takeaway)") +
+  stat_smooth(method = "lm")+
+  geom_jitter(aes(color = show),
+              size = 1,
+              alpha = 0.5) +
+  my_theme +
+  theme(legend.position = "none")
+
+```
+
+
+```{r, fig.height=7, fig.width=10}
+ggplot(a, aes(x = lag_day_1,
+              y = dls)) +
+    labs(title = "Distance From Previous Episode and Downloads. Studios (w/o The Takeaway). Zoom.") +
+  geom_jitter(size = 1,
+              alpha = 0.5,
+              aes(color = show)) +
+  coord_cartesian(ylim = c(0,500000)) +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+
+
+```{r}
+li_a <- a %>% mutate(sho = as.factor(show))
+linear_interactions <- lm(dls~ lag_day_1*lag_day_2  + weekday + publish_month + sho + publish_year, data = li_a)
+
+summary(linear_interactions)
+```
+
+
+
+```{r}
+summary(lm(dls~ lag_day_1 + weekday + publish_month + publish_year + sho, data = li_a))
+```
+
+```{r}
+summary(lm(dls~ lag_day_1 + lag_day_2+ lag_day_3  + weekday + publish_month + publish_year +show, data = a))
+```
+
+```{r}
+summary(lm(dls~ lag_day_1* lag_day_2*lag_day_3  + weekday + publish_month + publish_year +show, data = a))
+```
+
+
+
+```{r}
+multi <- lmer(formula = dls~ lag_day_1*lag_day_2 + weekday + publish_month + publish_year + (1 | show), data = a)
+
+
+
+
+```
+
+
+```{r, fig.height=8, fig.width=7}
+g <- summary(multi)
+
+viz <- data.frame(var = names(fixef(multi)),
+                  coef = fixef(multi),
+                  low = -2*g$coefficients[,2],
+                  high = 2*g$coefficients[,2])
+viz_2 <- viz %>% filter(var != "(Intercept)")
+viz_2$var <- factor(viz_2$var,levels = c("lag_day_1:lag_day_2", "lag_day_1", "lag_day_2", "weekdayTuesday" , "weekdayWednesday",
+                                     "weekdayThursday", "weekdayFriday", "weekdaySaturday", "weekdaySunday",
+                                     "publish_monthFeb", "publish_monthMar", "publish_monthApr", "publish_monthMay",
+                                     "publish_monthJun", "publish_monthJul", "publish_monthAug", "publish_monthSep",
+                                     "publish_monthOct", "publish_monthNov", "publish_monthDec",
+                                     "publish_year2017", "publish_year2018"))
+
+ggplot(viz_2,
+       aes(x = var,
+           y = coef)) +
+  labs(title = "Multilevel Regression Coefficients and 95% Confidence Intervals. Interactions.",
+       caption = "Dependent Variable: Downloads in the First 30 Days.",
+       x = "Variable",
+       y = "Coefficient Value") +
+  geom_hline(yintercept = 0,
+             linetype = "dashed",
+             color = "grey"
+             ) +
+  scale_color_manual(values = c("#f44141", "#4292f4")) +
+  geom_point(aes(color = coef > 0)) +
+  # geom_errorbar(aes(ymin = coef + low,
+  #                   ymax = coef + high,
+  #                   color = coef > 0)) +
+  geom_segment(aes(x = var, xend = var,
+                   y = coef + low, yend = coef + high,
+                   color = coef > 0)) +
+  coord_flip() +
+  my_theme
+
+g$coefficients
+```
+
+
+
+
+
+```{r}
+multi2 <- lmer(formula = dls~ lag_day_1 + weekday + publish_month + publish_year + (1 | show), data = a)
+
+multi2
+```
+
+
+```{r, fig.height=8, fig.width=7}
+g2 <- summary(multi2)
+
+g2$coefficients
+
+viz <- data.frame(var = names(fixef(multi2)),
+                  coef = fixef(multi2),
+                  low = -2*g$coefficients[,2],
+                  high = 2*g$coefficients[,2])
+viz_3 <- viz %>% filter(var != "(Intercept)")
+viz_3$var <- factor(viz_3$var,levels = c("lag_day_1", "lag_day_2", "weekdayTuesday" , "weekdayWednesday",
+                                     "weekdayThursday", "weekdayFriday", "weekdaySaturday", "weekdaySunday",
+                                     "publish_monthFeb", "publish_monthMar", "publish_monthApr", "publish_monthMay",
+                                     "publish_monthJun", "publish_monthJul", "publish_monthAug", "publish_monthSep",
+                                     "publish_monthOct", "publish_monthNov", "publish_monthDec",
+                                     "publish_year2017", "publish_year2018"))
+
+ggplot(viz_3,
+       aes(x = var,
+           y = coef)) +
+  labs(title = "Multilevel Regression Coefficients and 95% Confidence Intervals. Single Distance.",
+       caption = "Dependent Variable: Downloads in the First 30 Days.",
+       x = "Variable",
+       y = "Coefficient Value") +
+  geom_hline(yintercept = 0,
+             linetype = "dashed",
+             color = "grey"
+             ) +
+  scale_color_manual(values = c("#f44141", "#4292f4")) +
+  geom_point(aes(color = coef > 0)) +
+  # geom_errorbar(aes(ymin = coef + low,
+  #                   ymax = coef + high,
+  #                   color = coef > 0)) +
+  geom_segment(aes(x = var, xend = var,
+                   y = coef + low, yend = coef + high,
+                   color = coef > 0)) +
+  coord_flip() +
+  my_theme
+```
+
+
+```{r}
+jtools::interact_plot(linear_interactions, pred = lag_day_1, modx = lag_day_2,interval = T)
+```
+
+```{r}
+jtools::interact_plot(linear_interactions, pred = lag_day_1, modx = lag_day_2)
+```

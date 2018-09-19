@@ -1,0 +1,284 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(mytools)
+library(dplyr)
+library(tidyr)
+library(stringr)
+```
+
+
+```{r}
+rm(list = ls())
+```
+
+```{r}
+answers <- read.csv("answers.csv")
+var_names <- read.csv("variables.csv")
+vals <- fread("values.csv") %>% select(-V4)
+
+#fill up vlas variable column
+for(i in 1:nrow(vals)){
+  if(vals$Variable[i] == ""){
+    vals$Variable[i] <- vals$Variable[i-1]
+  }
+}
+
+#select Demogrpahic variables, fill with actual info
+answers <- answers %>% 
+  select(WEIGHT,
+         AGESEX,
+         AGESEX,
+         paste0("Q",3501:3523),
+         ETHNICITY) %>% 
+  left_join(vals %>% filter(Variable == "AGESEX") %>% 
+              select(-Variable),
+            by = c("AGESEX" = "Value")) %>% 
+  mutate(AGESEX = Label) %>% 
+  select(-Label) %>% 
+  left_join(vals %>% filter(Variable == "ETHNICITY") %>% 
+              select(-Variable),
+            by = c("ETHNICITY" = "Value")) %>% 
+  mutate(ETHNICITY = Label) %>% 
+  select(-Label) %>% 
+  left_join(vals %>% filter(Variable == "AGESEX") %>% 
+              select(-Variable),
+            by = c("AGESEX" = "Value")) %>% 
+  mutate(AGESEX = Label) %>% 
+  select(-Label)
+
+```
+
+
+
+
+```{r}
+demos <- data.frame(AGESEX = NA,
+                    total = NA,
+                    perc = NA,
+                    show = NA)
+
+for(i in colnames(answers)[grepl("Q[1-9].*", colnames(answers))]){
+  a<- answers %>% filter_(paste0(i,"== 1")) %>% 
+    group_by(AGESEX) %>%
+    summarise(total = sum(WEIGHT)) %>% 
+    mutate(perc = (total/sum(total))*100,
+           show = i)
+  demos <- rbind(demos,a)
+}
+
+demos <- demos %>%
+  filter(!is.na(show)) %>% 
+  left_join(var_names,by = c("show" = "Variable")) %>% 
+  mutate(show = Label,
+         perc = round(perc, 2),
+         AGESEX = factor(AGESEX,levels = answers %>% 
+                              group_by(AGESEX) %>%
+                              summarise(s = sum(WEIGHT)) %>%
+                              arrange(desc(s))%>%
+                              pull(AGESEX))) %>% 
+  select(-Label)
+
+demos$show <- factor(demos$show,
+                     levels = demos %>% 
+                       filter(AGESEX == "Men") %>% 
+                       arrange(perc) %>% 
+                       pull(show))
+```
+
+```{r, fig.width= 8, fig.height=10}
+demos_graph <- demos %>%
+  group_by(show, AGESEX) %>% 
+  summarise(perc = sum(perc),
+            total = sum(total)) %>%
+  ungroup() %>%
+  group_by(show) %>% 
+  mutate(n = round(sum(total),0))
+
+levels_shows <- levels(demos_graph$show)
+levels_eth <- levels(demos_graph$AGESEX)
+
+total_add <- answers %>%
+               group_by(AGESEX) %>% 
+               summarise(total = sum(WEIGHT)) %>% 
+               mutate(perc = (total/sum(total))*100,
+                      show = "All",
+                      AGESEX = factor(AGESEX, levels = levels_eth)) %>% 
+  ungroup() %>% 
+  mutate(n = round(sum(total),0)) %>% 
+  select(colnames(demos_graph))
+
+wnyc_add <- answers %>%
+  filter(Q3523 == 0) %>%
+               group_by(AGESEX) %>% 
+               summarise(total = sum(WEIGHT)) %>% 
+               mutate(perc = (total/sum(total))*100,
+                      show = "WNYC",
+                      AGESEX = factor(AGESEX, levels = levels_eth)) %>% 
+  ungroup() %>% 
+  mutate(n = round(sum(total),0)) %>% 
+  select(colnames(demos_graph))
+
+
+
+demos_graph <- bind_rows(demos_graph %>% ungroup(),total_add %>% ungroup()) %>% 
+  bind_rows(wnyc_add %>% ungroup()) %>% 
+  mutate(show = factor(show, levels = c(levels_shows[-grep("None of these",levels_shows)], "WNYC", "None of these", "All")),
+         AGESEX = factor(AGESEX, levels = levels_eth))
+```
+
+
+```{r}
+
+total_ad_all <- answers %>%
+               group_by(ETHNICITY) %>% 
+               summarise(total = sum(WEIGHT)) %>% 
+               mutate(perc = (total/sum(total))*100,
+                      show = "All") %>% 
+  ungroup() %>% 
+  mutate(n = round(sum(total),0)) %>% 
+  select(colnames(demos_graph))
+
+wnyc_add_all <- answers %>%
+               filter(Q3523 == 0) %>%
+               group_by(ETHNICITY) %>% 
+               summarise(total = sum(WEIGHT)) %>% 
+               mutate(perc = (total/sum(total))*100,
+                      show = "WNYC") %>% 
+  ungroup() %>% 
+  mutate(n = round(sum(total),0)) %>% 
+  select(colnames(demos_graph))
+
+
+
+demo_table <- demos %>% select(show, ETHNICITY, percentage = perc) %>% 
+  mutate(percentage = round(percentage, 2)) %>% 
+  spread(ETHNICITY, percentage) %>% 
+  bind_rows(total_ad_all %>% select(show, ETHNICITY, percentage = perc) %>% 
+              mutate(percentage = round(percentage, 2)) %>%
+              spread(ETHNICITY, percentage)) %>% 
+  bind_rows(wnyc_add_all %>% select(show, ETHNICITY, percentage = perc) %>% 
+              mutate(percentage = round(percentage, 2)) %>%
+              spread(ETHNICITY, percentage))
+demo_table[is.na(demo_table)] <- 0
+
+
+
+demo_table_final <- data.frame(demo_table[1],
+                               sapply(demo_table[2:ncol(demo_table)], function(x) paste0(as.character(x), "%")))
+colnames(demo_table_final) <- gsub("\\.", " ", colnames(demo_table_final))
+write.csv(demo_table_final, "demos.csv")
+```
+
+
+
+
+```{r, fig.width= 8, fig.height=10}
+ggplot(demos_graph) +
+  labs(title = "Gender Distribution Per Show. Edison Survey. Highest Percentage Men.",
+       x = "",
+       y = "percentage",
+       fill = "AGESEX") +
+  geom_bar(aes(x = show,
+               y = perc,
+               fill = AGESEX),
+           stat = "identity",
+           color = "grey") +
+  geom_text(aes(x = show, y  = perc, group = AGESEX,
+                label = ifelse(perc > 2.5, paste0(round(perc,0), "%"),
+                "")),
+            position = position_stack(vjust = .5),
+            size = 2.5)+
+  geom_text(data = demos_graph %>%
+              group_by(show) %>% 
+              slice(1),
+            aes(x = show, y  = 107, group = show,
+                label = paste("n=",n)),
+            size = 3)+
+  coord_flip() +
+  my_theme +
+  theme(legend.position = c(0.4, -0.1),
+        legend.direction = "horizontal",
+        plot.margin = unit(c(0.5,1,2,0.5),  "cm"),
+        plot.title = element_text(hjust = 0.9))
+
+
+```
+
+
+```{r, fig.width= 8, fig.height=6}
+ggplot(demos_graph %>% 
+         mutate(show = factor(show, levels = c(demo_table %>%
+                                filter(show %!in% c("WNYC", "None of these", "All")) %>% 
+                                arrange(`Black or African American`) %>%
+                                pull(show), "WNYC", "None of these", "All") ))) +
+  labs(title = "Demographic Distribution Per Show. Highest Percentage African American.",
+       x = "",
+       y = "percentage",
+       fill = "Ethnicity") +
+  geom_bar(aes(x = show,
+               y = perc,
+               fill = ETHNICITY),
+           stat = "identity",
+           color = "grey") +
+  geom_text(aes(x = show, y  = perc, group = ETHNICITY,
+                label = ifelse(perc > 2.5, paste0(round(perc,0), "%"),
+                "")),
+            position = position_stack(vjust = .5),
+            size = 2.5)+
+  geom_text(data = demos_graph %>%
+              group_by(show) %>% 
+              slice(1),
+            aes(x = show, y  = 107, group = show,
+                label = paste("n=",n)),
+            size = 3)+
+  coord_flip() +
+  my_theme +
+  theme(legend.position = c(0.4, -0.1),
+        legend.direction = "horizontal",
+        plot.margin = unit(c(0.5,1,2,0.5),  "cm"),
+        plot.title = element_text(hjust = 0.9))
+```
+
+```{r, fig.width= 8, fig.height=6}
+ggplot(demos_graph %>% 
+         mutate(show = factor(show, levels = c(demo_table %>%
+                                filter(show %!in% c("WNYC", "None of these", "All")) %>% 
+                                arrange(`Hispanic or Latino`) %>%
+                                pull(show), "WNYC", "None of these", "All") ))) +
+  labs(title = "Demographic Distribution Per Show. Highest Percentage Hispanic.",
+       x = "",
+       y = "percentage",
+       fill = "Ethnicity") +
+  geom_bar(aes(x = show,
+               y = perc,
+               fill = ETHNICITY),
+           stat = "identity",
+           color = "grey") +
+  geom_text(aes(x = show, y  = perc, group = ETHNICITY,
+                label = ifelse(perc > 2.5, paste0(round(perc,0), "%"),
+                "")),
+            position = position_stack(vjust = .5),
+            size = 2.5)+
+  geom_text(data = demos_graph %>%
+              group_by(show) %>% 
+              slice(1),
+            aes(x = show, y  = 107, group = show,
+                label = paste("n=",n)),
+            size = 3)+
+  coord_flip() +
+  my_theme +
+  theme(legend.position = c(0.4, -0.1),
+        legend.direction = "horizontal",
+        plot.margin = unit(c(0.5,1,2,0.5),  "cm"),
+        plot.title = element_text(hjust = 1))
+```
+
+
+
+

@@ -1,0 +1,46 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+a <- read.csv("client downloads.csv")
+a <- a %>% arrange(desc(Downloads)) %>% 
+  mutate(Client = factor(Client, levels = Client))
+b <- read.csv("only_human.csv", header = F) %>%
+  select(Client = V1, Downloads = V2) %>% arrange(desc(Downloads)) %>% 
+  mutate(Client = factor(Client, levels = Client))
+```
+
+```{r}
+ggplot(a %>% slice(1:10)) +
+  labs(title = "Top Sources of Podcast Downloads") +
+  geom_bar(aes(x = Client, y = Downloads),
+           stat = "identity",
+           fill = "#8bd3ed") +
+  geom_text(aes(x = Client, y = Downloads,
+                label = paste(  round( (Downloads / sum(Downloads) *100), 2), "%", sep = "")),
+                size = 3.3,
+            nudge_y = 8000000) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10)) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
+
+```{r}
+ggplot(b %>% slice(1:10)) +
+  labs(title = "Top Sources of Podcast Downloads. Only Human.") +
+  geom_bar(aes(x = Client, y = Downloads),
+           stat = "identity",
+           fill = "#8bd3ed") +
+  geom_text(aes(x = Client, y = Downloads,
+                label = paste(  round( (Downloads / sum(Downloads) *100), 2), "%", sep = "")),
+                size = 3.3,
+            nudge_y = 37000) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10)) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
